@@ -45,9 +45,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   auth key in Vault, disabled key expiry, admin 2FA) and an optional `tailscale` role spec.
 
 ### Fixed
-- `ansible.cfg` set `vault_password_file` with a trailing comment on the value line. Ansible's
-  INI parser does not strip these, so the configured path included the comment text and every
-  playbook run failed to find the vault password file.
+- `ansible.cfg` no longer pins `vault_password_file`. The vault password lives in a gitignored
+  file, so naming its path in committed configuration made the repository unusable to anyone
+  without that file: `ansible-lint` and `--syntax-check` fail hard when the configured path is
+  missing, even though linting never decrypts anything. This broke CI on the first push and
+  would have broken `make lint` for anyone cloning the repo. The path now comes from
+  `ANSIBLE_VAULT_PASSWORD_FILE`, which the `Makefile` exports automatically when `.vault_pass`
+  is present.
+- `ansible.cfg` previously set `vault_password_file` with a trailing comment on the value line.
+  Ansible's INI parser does not strip these, so the configured path included the comment text
+  and every playbook run failed to find the vault password file.
+
+### Added
+- `make vault-check` — verifies the vault password file exists and successfully decrypts the
+  vault, with distinct messages for "missing" and "wrong password".
 - Lint violations that would have failed CI on the first push: unnamed plays in `site.yml`,
   YAML spacing in `hosts.example.yml`, and a `.yamllint` setting incompatible with
   `ansible-lint`.
