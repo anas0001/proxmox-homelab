@@ -41,6 +41,12 @@ cp inventories/homelab/group_vars/all/vault.example.yml \
 ansible-vault encrypt inventories/homelab/group_vars/all/vault.yml          # fill secrets first
 echo "<your-vault-password>" > .vault_pass && chmod 600 .vault_pass         # gitignored
 
+# The vault password path is NOT in ansible.cfg — that file is committed, and
+# .vault_pass is not, so hardcoding it there breaks linting for CI and for
+# anyone else who clones this repo. The `make` targets export this for you;
+# set it yourself only when calling ansible-playbook directly.
+export ANSIBLE_VAULT_PASSWORD_FILE=.vault_pass
+
 make deps            # collections + pre-commit hooks
 make ping            # connectivity
 make check           # dry-run everything
