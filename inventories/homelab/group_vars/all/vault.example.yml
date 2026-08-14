@@ -1,0 +1,20 @@
+---
+# TEMPLATE ONLY. Copy to vault.yml, fill REAL values, then:
+#   ansible-vault encrypt inventories/homelab/group_vars/all/vault.yml
+# vault.yml is gitignored. NEVER commit real secrets. This example holds placeholders only.
+
+# Proxmox API token secret (from: pveum user token add ansible@pve automation)
+vault_pve_api_token_secret: "CHANGE_ME-uuid-token-secret"
+
+# Public SSH key for the guest admin user (PUBLIC key is fine, but keep real one out of git)
+vault_guest_admin_ssh_pubkey: "ssh-ed25519 AAAA...CHANGE_ME homelab-admin"
+
+# Hashed password for the guest admin (mkpasswd --method=sha-512); optional if key-only
+vault_guest_admin_password_hash: "$6$CHANGE_ME"
+
+# Proxmox root password (set at install; store here for reference/rotation)
+vault_pve_root_password: "CHANGE_ME"
+
+# Tailscale auth key — OPTIONAL. Only needed if pve_tailscale_enabled: true (unattended
+# enrolment). You're already connected via a manual `tailscale up`, so this can be omitted.
+# vault_tailscale_auth_key: "tskey-auth-CHANGE_ME"

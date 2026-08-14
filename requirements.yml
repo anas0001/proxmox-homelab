@@ -1,0 +1,15 @@
+---
+# Ansible Galaxy dependencies. Install with:  make deps
+#
+# Proxmox modules live in community.proxmox. They were removed from
+# community.general in 13.0.0 — a `community.general.proxmox_kvm` task fails
+# outright on current collections rather than merely warning.
+collections:
+  - name: community.proxmox     # proxmox_kvm, _pool, _role, _user, _firewall, _snap, _acme_*
+    version: ">=2.0.0"
+  - name: ansible.posix         # profile_tasks, timer, sysctl, mount, authorized_key
+    version: ">=1.5.0"
+  - name: community.general     # ini_file, deb822_repository helpers, misc utilities
+    version: ">=9.0.0"
+  - name: community.crypto      # TLS/cert generation, SSH keypair management
+    version: ">=2.16.0"

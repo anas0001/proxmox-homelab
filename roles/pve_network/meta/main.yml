@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Network bridges and the isolated NAT lab network on a Proxmox VE host."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - networking
+    - bridge
+
+dependencies: []

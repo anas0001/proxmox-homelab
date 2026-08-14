@@ -1,0 +1,27 @@
+---
+# Non-secret defaults. Secrets are referenced from Vault via vault_* aliases.
+# ── Proxmox API (secret pulled from Vault) ──────────────────────────
+pve_api_token_secret: "{{ vault_pve_api_token_secret }}"
+pve_api_validate_certs: true            # set false only for an internal-CA/self-signed lab, and document it
+
+# ── Storage ─────────────────────────────────────────────────────────
+pve_vm_storage: "local-lvm"             # thin pool for VM disks
+pve_iso_storage: "local"
+pve_thin_pool_warn_percent: 80          # pve_base guard fails above this
+
+# ── Cloud-init golden templates ─────────────────────────────────────
+vm_templates:
+  rocky9:
+    vmid: 9000
+    name: tmpl-rocky9
+    image_url: "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2"
+# ubuntu2404: build on demand
+
+# ── Admin identity injected into guests via cloud-init ──────────────
+guest_admin_user: svc_admin
+guest_admin_ssh_key: "{{ vault_guest_admin_ssh_pubkey }}"   # PUBLIC key only
+
+# ── Lab network defaults (examples; override per site) ──────────────
+lab_nat_subnet: "10.10.10.0/24"
+lab_nat_gateway: "10.10.10.1"
+lab_domain: "homelab.local"

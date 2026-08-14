@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Security hardening for the Proxmox VE host: SSH, firewall, fail2ban, auditd and sysctl."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - security
+    - hardening
+
+dependencies: []

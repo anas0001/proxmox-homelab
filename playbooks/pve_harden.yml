@@ -1,0 +1,9 @@
+---
+# Apply the security hardening spec (docs/security.md).
+- name: Harden Proxmox host
+  hosts: pve
+  become: true
+  gather_facts: true
+  tags: [harden]
+  roles:
+    - role: pve_security

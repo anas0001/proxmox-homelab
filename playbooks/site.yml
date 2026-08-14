@@ -1,0 +1,18 @@
+---
+# Full bring-up: base -> harden -> network -> provision -> configure guests.
+# Run staged playbooks individually during development; run this for a full apply.
+#
+# Order is not arbitrary. Hardening precedes provisioning so lab VMs are never
+# created on an unhardened host, and guest configuration comes last because it
+# needs the lab network the earlier stages build.
+- name: Bootstrap the Proxmox host
+  ansible.builtin.import_playbook: pve_bootstrap.yml
+
+- name: Harden the Proxmox host
+  ansible.builtin.import_playbook: pve_harden.yml
+
+- name: Build templates and provision lab VMs
+  ansible.builtin.import_playbook: provision_vms.yml
+
+- name: Configure guest baseline
+  ansible.builtin.import_playbook: configure_guests.yml

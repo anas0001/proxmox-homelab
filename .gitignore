@@ -1,0 +1,42 @@
+# ─── Secrets: NEVER commit these ───────────────────────────────
+.vault_pass
+*.vault_pass
+vault_pass*
+# Vaulted var files (keep only the *.example.yml templates)
+**/vault.yml
+**/*vault*.yml
+!**/vault.example.yml
+# Real inventory & host data (keep only *.example.yml)
+inventories/**/hosts.yml
+inventories/**/host_vars/*.yml
+!inventories/**/*.example.yml
+# Private keys / certs / tokens
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*token*
+!**/*.example*
+# cloud-init user-data can contain hashed passwords / keys
+files/cloud-init/user-data*
+!files/cloud-init/user-data.example
+
+# ─── Ansible runtime ───────────────────────────────────────────
+*.retry
+.ansible/
+fact_cache/
+
+# ─── Python / tooling ──────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pre-commit-cache/
+
+# ─── Editors / OS ──────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,18 @@
+#cloud-config
+# EXAMPLE cloud-init user-data for a lab VM. The REAL one (user-data*) is gitignored
+# because it may contain a hashed password / keys. Public SSH keys are safe; secrets are not.
+hostname: node1
+fqdn: node1.homelab.local
+users:
+  - name: svc_admin
+    groups: [sudo, wheel]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: true          # key-only
+    ssh_authorized_keys:
+      - "ssh-ed25519 AAAA...CHANGE_ME homelab-admin"   # PUBLIC key
+ssh_pwauth: false
+package_update: true
+packages: [qemu-guest-agent, chrony]
+runcmd:
+  - systemctl enable --now qemu-guest-agent

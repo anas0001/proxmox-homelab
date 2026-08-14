@@ -1,0 +1,11 @@
+---
+# Build golden templates (once) and clone lab VMs from them.
+# Guarded: never targets the host's own disks; VM state is driven by inventory.
+- name: Build templates and provision lab VMs
+  hosts: pve
+  become: true
+  gather_facts: true
+  tags: [provision]
+  roles:
+    - role: vm_template      # download cloud image + build cloud-init template(s)
+    - role: vm_provision     # clone -> configure -> boot -> snapshot 'clean'

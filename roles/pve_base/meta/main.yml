@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Base Proxmox VE host configuration: APT repositories, packages, time sync, LVM-thin pool guard and nested virtualisation."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - debian
+    - system
+
+dependencies: []

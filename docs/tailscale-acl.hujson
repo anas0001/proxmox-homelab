@@ -1,0 +1,42 @@
+// Tailscale tailnet policy for the homelab.
+// Safe to commit: contains authorization rules only, NO secrets (no auth keys/tokens).
+// Paste/manage this in the Tailscale admin console (Access Controls). Keep this file in sync.
+//
+// Model: the Proxmox host is TAGGED `tag:homelab`. Only your admin device(s) may reach it,
+// and only on SSH (22) and the Proxmox web UI (8006). Everything else on the tailnet is denied
+// by default (Tailscale is default-deny once you replace the starter "allow all" rule).
+{
+  // ── Who may own/assign each tag ─────────────────────────────────────────────
+  "tagOwners": {
+    // The Proxmox host is enrolled with this tag (matches pve_tailscale_tags in the repo).
+    "tag:homelab":           ["autogroup:admin"],
+    // Optional: tag your admin laptop/workstation so ACLs can reference it as a source.
+    "tag:admin-workstation": ["autogroup:admin"],
+  },
+
+  // ── Optional named groups (uncomment and use your real email) ───────────────
+  // "groups": {
+  //   "group:admins": ["you@example.com"],
+  // },
+
+  // ── Access rules (least privilege; default is deny) ─────────────────────────
+  "acls": [
+    // Admin device(s) -> Proxmox host, SSH + web UI ONLY.
+    // src can be a tag on your laptop (tag:admin-workstation) OR your user identity
+    // (e.g. "admin@example.com" / "group:admins") to cover all your devices.
+    {
+      "action": "accept",
+      "src":    ["tag:admin-workstation"],
+      "dst":    ["tag:homelab:22", "tag:homelab:8006"],
+    },
+    // If you enable the host as a subnet router for the lab net (10.10.10.0/24),
+    // add a scoped rule here, e.g.:
+    // { "action": "accept", "src": ["tag:admin-workstation"], "dst": ["10.10.10.0/24:*"] },
+  ],
+
+  // ── Keep Tailscale SSH OFF by default (hardened OpenSSH is the baseline). ────
+  // "ssh": [],
+
+  // Optional: prevent tagged nodes' keys from expiring is set in the admin console
+  // (Machines -> the host -> Disable key expiry), not in this policy file.
+}

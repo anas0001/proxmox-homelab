@@ -1,0 +1,13 @@
+---
+profile: production          # strictest profile: enforces senior-grade practices
+exclude_paths:
+  - .ansible/
+  - .venv/
+  - inventories/**/*.example.yml
+use_default_rules: true
+warn_list:
+  - experimental
+enable_list:
+  - no-log-password
+  - no-same-owner
+skip_list: []

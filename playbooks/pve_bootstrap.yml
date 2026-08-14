@@ -1,0 +1,11 @@
+---
+# Base Proxmox config: repos (no-subscription), packages, chrony, admin user, thin-pool guard.
+- name: Bootstrap Proxmox host
+  hosts: pve
+  become: true
+  gather_facts: true
+  tags: [bootstrap]
+  roles:
+    - role: pve_base
+    - role: pve_network      # bridges + VLAN-aware + NAT lab net
+      tags: [network]

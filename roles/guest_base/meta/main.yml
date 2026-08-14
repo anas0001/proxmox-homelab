@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Baseline configuration applied to every lab guest over SSH."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions:
+        - all
+
+    - name: Ubuntu
+      versions:
+        - noble
+  galaxy_tags:
+    - linux
+    - baseline
+    - security
+
+dependencies: []

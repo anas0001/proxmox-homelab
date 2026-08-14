@@ -1,0 +1,23 @@
+---
+extends: default
+rules:
+  line-length:
+    max: 160
+    level: warning
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  # Required to be false for compatibility with ansible-lint, which reports an
+  # "incompatible custom yamllint configuration" warning otherwise.
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+# Skip whatever git skips, so vaulted/real files (which are not valid plain
+# YAML, and are gitignored) never trip the linter. Self-maintaining: adding a
+# path to .gitignore also excludes it here.
+ignore-from-file: .gitignore

@@ -1,0 +1,6 @@
+---
+# Baseline applied to every guest VM by guest_base
+guest_base_packages: [vim, git, chrony, tmux, curl]
+guest_base_enable_firewall: true
+guest_base_ssh_password_auth: false
+guest_base_timezone: "UTC"

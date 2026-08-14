@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Clone golden templates into lab VMs, apply cloud-init configuration and snapshot."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - cloudinit
+    - provisioning
+
+dependencies: []

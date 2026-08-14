@@ -1,0 +1,9 @@
+---
+# Configure the guest VMs over SSH (baseline; per-phase config layered elsewhere).
+- name: Configure guest baseline
+  hosts: guests
+  become: true
+  gather_facts: true
+  tags: [configure]
+  roles:
+    - role: guest_base
