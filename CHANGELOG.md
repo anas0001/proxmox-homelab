@@ -25,6 +25,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   over SSH with `pveum` rather than the API modules, which breaks the circular
   dependency (the modules need the credential this role creates) and avoids storing
   the Proxmox root password anywhere.
+- `docs/out-of-band.md`: register of every host change not applied by Ansible, so a
+  rebuilt host can be restored from this repository plus that one file. Covers the
+  pending thin-pool extension and the pre-existing manual Tailscale enrolment.
 - `docs/tailscale-acl.hujson` starter tailnet policy (tagOwners + least-privilege ACL,
   no secrets) and a runbook section for creating the tagged Tailscale auth key.
 - Runbook section on thin-pool capacity, documenting the pool extension as a deliberate

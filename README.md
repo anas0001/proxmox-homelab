@@ -42,7 +42,7 @@ See [`docs/runbook.md`](docs/runbook.md) for the full first-run, token creation,
 
 ## Repository layout
 ```
-docs/            architecture, security, network, runbook
+docs/            architecture, security, network, runbook, out-of-band register
 inventories/     sanitised example inventory + vault template (real files gitignored)
 playbooks/       site.yml + staged playbooks
 roles/           pve_base, pve_security, pve_network, vm_template, vm_provision, guest_base

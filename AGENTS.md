@@ -134,7 +134,8 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 │   ├── architecture.md      # design + VM plan (hardware-aware)
 │   ├── security.md          # Proxmox hardening spec + secrets model
 │   ├── network.md           # bridges, VLANs, subnets
-│   └── runbook.md           # first-run, day-2 ops, recovery
+│   ├── runbook.md           # first-run, day-2 ops, recovery
+│   └── out-of-band.md       # register of host changes NOT applied by Ansible
 ├── inventories/homelab/
 │   ├── hosts.example.yml    # SANITISED example — copy to hosts.yml (gitignored)
 │   ├── group_vars/
@@ -272,6 +273,9 @@ This repo will be public. **Nothing that could expose or endanger the setup may 
 5. Keep the thin-pool guard and safety checks in mind — destructive VM/disk actions must be
    guarded (`when:` conditions, `--limit`) and must never target the host's own disks.
 6. Update `CHANGELOG.md` and the relevant doc with every functional change.
+6a. **Any host change made outside Ansible must be recorded in `docs/out-of-band.md`
+   before it is made**, with the verbatim command and how to verify it. The repository
+   plus that file must be enough to rebuild the host. Prefer codifying to recording.
 7. `make lint && make secrets-scan` must pass before you commit; open a PR.
 
 If a requested action risks data loss (deleting VMs/disks, resizing the host pool, touching the
