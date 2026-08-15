@@ -55,7 +55,7 @@ Verified against the running host, not assumed.
 
 ---
 
-## 3. Storage & sizing plan (respect the 256 GB limit)
+## 3. Storage & sizing plan (respect the 130 GB thin pool)
 
 Actual on-disk layout (`lsblk`, `vgs`, `lvs`):
 
@@ -87,7 +87,7 @@ Ansible runs **from the user's workstation** (or a tiny control LXC), targeting:
 - the **Proxmox host** over SSH + the **Proxmox API** (token auth) for VM lifecycle, and
 - the **guest VMs** over SSH for in-guest configuration.
 
-Provisioning flow: build a **cloud-init golden template** once -> `community.general.proxmox_kvm`
+Provisioning flow: build a **cloud-init golden template** once -> `community.proxmox.proxmox_kvm`
 **clones** it per VM -> cloud-init sets hostname/user/SSH-key/network -> Ansible connects and
 configures the guest -> snapshot `clean`.
 
