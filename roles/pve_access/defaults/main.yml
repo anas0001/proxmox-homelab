@@ -1,0 +1,91 @@
+---
+# Identity and authorisation plane for automation against the Proxmox API.
+#
+# Everything here is least privilege by construction: a dedicated user, two
+# purpose-built roles, and an API token scoped to a single resource pool and
+# the two storages the lab actually uses. Nothing runs as root@pam.
+
+# Resource pool that owns every lab VM. Scoping the ACL to a pool rather than
+# to /vms means the token cannot touch a VM created outside the lab.
+pve_access_pool: labs
+pve_access_pool_comment: "Lab VMs managed by Ansible"
+
+# Dedicated automation identity in the built-in `pve` realm. Separate from any
+# human account so its permissions can stay narrow and its credentials can be
+# rotated without disturbing interactive logins.
+pve_access_user: "ansible@pve"
+pve_access_user_comment: "Ansible automation (least privilege)"
+
+# API token belonging to that user. Privilege separation is enabled, so the
+# token's effective rights are the intersection of the user's and the token's
+# own ACLs — granting the human user more later will not widen the token.
+pve_access_token_id: automation
+pve_access_token_privsep: true
+
+# Custom roles. Two rather than one so VM rights and storage rights can be
+# granted at the paths where they are actually meaningful: VM privileges on the
+# pool, storage privileges on the storages.
+pve_access_vm_role: AnsibleLabVM
+pve_access_storage_role: AnsibleLabStorage
+
+# Storages the automation may consume space on.
+#   local      - ISOs and downloaded cloud images
+#   local-lvm  - the LVM-thin pool holding every VM disk
+pve_access_storages:
+  - local
+  - local-lvm
+
+# VM privileges, granted on /pool/{{ pve_access_pool }}.
+# Note: PVE 9 has no `VM.Monitor` privilege. Guest-agent readiness checks use
+# VM.GuestAgent.Audit instead.
+pve_access_vm_privs:
+  - VM.Allocate            # create and destroy VMs
+  - VM.Audit               # read VM configuration and status
+  - VM.Clone               # clone the golden templates
+  - VM.Config.CDROM        # attach the cloud-init drive
+  - VM.Config.CPU
+  - VM.Config.Cloudinit    # set hostname, user, SSH key, addressing
+  - VM.Config.Disk         # size the root disk, attach extra lab disks
+  - VM.Config.HWType       # machine type, SCSI controller, guest agent
+  - VM.Config.Memory
+  - VM.Config.Network
+  - VM.Config.Options      # boot order, serial console, template flag
+  - VM.PowerMgmt           # start and stop lab VMs
+  - VM.Snapshot            # take the `clean` snapshot
+  - VM.Snapshot.Rollback   # reset a lab VM back to `clean`
+  - VM.GuestAgent.Audit    # wait for the guest agent after boot
+  - Pool.Audit             # read the pool the VMs belong to
+
+# Storage privileges, granted on /storage/<id> for each entry above.
+pve_access_storage_privs:
+  - Datastore.Audit            # read storage status and contents
+  - Datastore.AllocateSpace    # allocate VM disks in the thin pool
+  - Datastore.AllocateTemplate # place downloaded cloud images on `local`
+
+# Deliberately NOT granted, and why. Each of these is a privilege the
+# automation could plausibly be given and does not need:
+#
+#   VM.Console, VM.GuestAgent.Unrestricted, VM.GuestAgent.File*
+#     Execute commands and read or write files inside running guests. Ansible
+#     reaches guests over SSH; it does not need the hypervisor as a side channel
+#     into them. Excluding these means a stolen token cannot exfiltrate guest
+#     data through the API.
+#
+#   Datastore.Allocate
+#     Creates and removes storage *definitions*. The automation needs space
+#     inside existing storage, never the ability to redefine it.
+#
+#   Permissions.Modify, User.Modify, Group.Allocate, Realm.*
+#     Privilege escalation. A token that can widen its own permissions is not
+#     least privilege, whatever its other rights say.
+#
+#   Sys.Modify, Sys.PowerMgmt
+#     Host network reconfiguration and host reboot. Host-level changes are made
+#     over SSH under a separate credential, deliberately not reachable from the
+#     API token.
+#
+#   VM.Backup, VM.Migrate, VM.Replicate
+#     Meaningless on a single node with no backup target configured yet.
+#
+#   SDN.*
+#     The lab networks are plain Linux bridges, not SDN vnets.

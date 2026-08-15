@@ -7,5 +7,11 @@
   tags: [bootstrap]
   roles:
     - role: pve_base
+    # Creates the least-privilege API identity that vm_template and
+    # vm_provision authenticate with. Runs before anything that touches the
+    # API, and over SSH as root, because the credential it creates is the one
+    # the API modules would otherwise need in order to run at all.
+    - role: pve_access
+      tags: [access]
     - role: pve_network      # bridges + VLAN-aware + NAT lab net
       tags: [network]

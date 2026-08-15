@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Least-privilege Proxmox API identity: resource pool, custom roles, automation user and scoped API token."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - security
+    - iam
+
+dependencies: []

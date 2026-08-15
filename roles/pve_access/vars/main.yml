@@ -1,0 +1,26 @@
+---
+# Internal variables for pve_access. Not intended to be overridden.
+
+# Absolute paths rather than bare names. `pveum` lives in /usr/sbin and `pvesh`
+# in /usr/bin, so a bare invocation depends on how the remote shell composes
+# PATH — which varies between interactive, non-interactive and become contexts.
+# Pinning the paths removes that variable entirely.
+pve_access_pveum: /usr/sbin/pveum
+pve_access_pvesh: /usr/bin/pvesh
+
+# ACL path that scopes every VM privilege. VM rights granted here apply only to
+# VMs that are members of this pool.
+pve_access_pool_path: "/pool/{{ pve_access_pool }}"
+
+# Fully qualified token identifier, in Proxmox's `user@realm!tokenname` form.
+pve_access_token_full: "{{ pve_access_user }}!{{ pve_access_token_id }}"
+
+# Both principals need ACL entries. With privilege separation enabled a token's
+# effective rights are the intersection of the user's ACLs and its own, so
+# granting only one of them yields a token that authenticates and is then
+# denied everything.
+pve_access_principals:
+  - id: "{{ pve_access_user }}"
+    is_token: false
+  - id: "{{ pve_access_token_full }}"
+    is_token: true

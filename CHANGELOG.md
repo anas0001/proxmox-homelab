@@ -18,6 +18,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Role skeletons for `pve_base`, `pve_security`, `pve_network`, `vm_template`,
   `vm_provision` and `guest_base`, each with `galaxy_info` metadata and a README
   describing its responsibilities.
+- `pve_access` role: creates the least-privilege API identity used by every later
+  API-driven role — a `labs` resource pool, two purpose-scoped custom roles
+  (`AnsibleLabVM` on the pool, `AnsibleLabStorage` on the storages), a dedicated
+  `ansible@pve` user, and an API token with privilege separation enabled. Bootstraps
+  over SSH with `pveum` rather than the API modules, which breaks the circular
+  dependency (the modules need the credential this role creates) and avoids storing
+  the Proxmox root password anywhere.
 - `docs/tailscale-acl.hujson` starter tailnet policy (tagOwners + least-privilege ACL,
   no secrets) and a runbook section for creating the tagged Tailscale auth key.
 - Runbook section on thin-pool capacity, documenting the pool extension as a deliberate
@@ -33,6 +40,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `community.general.proxmox_kvm` fail outright on current collections.
 - `Makefile` targets prefer a local `.venv` when present and fall back to `PATH`, so the
   same targets work locally and in CI.
+- `ansible.cfg` uses the native `result_format = yaml` on the default callback. The
+  previous `stdout_callback = yaml` referred to `community.general.yaml`, removed in
+  community.general 12.0.0, which made every playbook run abort before its first task.
 - `pre-commit` hook revisions updated to current releases (gitleaks 8.30.0,
   pre-commit-hooks 6.0.0, yamllint 1.38.0, ansible-lint 26.8.0).
 - Clarified that Tailscale is already deployed manually: the `tailscale-acl.hujson` policy and
