@@ -79,6 +79,43 @@ on the same volume, so a failure means an unbootable host. The full procedure is
 
 ---
 
+## Verifying the host against this repository
+
+`scripts/host-state.sh` captures a strictly read-only snapshot of everything this project
+touches — hardware, LVM-thin usage, APT sources, networking, guests, the access plane
+(pools/roles/users/tokens/ACLs), the firewall, and SSH exposure.
+
+```bash
+./scripts/host-state.sh                       # print a snapshot
+
+./scripts/host-state.sh > /tmp/before.txt     # capture, apply a change, compare
+TAGS=access make bootstrap
+./scripts/host-state.sh > /tmp/after.txt
+diff -u /tmp/before.txt /tmp/after.txt        # exactly what moved
+```
+
+Keeping a `before`/`after` pair around any change is the cheapest way to confirm that a role did
+what it claimed and nothing else — and it makes an unrecorded change obvious rather than
+invisible.
+
+### Expected state before any role has run
+
+A host that has only been installed and joined to Tailscale should show:
+
+| Section | Expected |
+|---|---|
+| Guests | `qm list` and `pct list` both empty |
+| Access plane | pools `[]`, ACLs `[]`, users only `root@pam`, no custom roles, no tokens |
+| Firewall | `cluster.fw` and `host.fw` absent (Proxmox firewall never enabled) |
+| SSH | `permitrootlogin yes`, `passwordauthentication yes`, `maxauthtries 6` |
+| Services | `chrony` active; `fail2ban` and `auditd` inactive |
+| LVM | `pve/data` 130.27 GB at 0.00% used, 16 GB unallocated in the volume group |
+
+Anything else means something has been applied. `pve_access` is the first role that changes the
+access-plane row.
+
+---
+
 ## Incidents
 
 ### 2026-08-15 — stray ACL probe

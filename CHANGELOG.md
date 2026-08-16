@@ -25,6 +25,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   over SSH with `pveum` rather than the API modules, which breaks the circular
   dependency (the modules need the credential this role creates) and avoids storing
   the Proxmox root password anywhere.
+- `scripts/host-state.sh`: strictly read-only snapshot of everything this project
+  touches on the host — hardware, LVM-thin usage, APT sources, networking, guests,
+  the access plane, the firewall and SSH exposure. Diff a before/after pair around
+  any change to see exactly what moved.
 - `docs/out-of-band.md`: register of every host change not applied by Ansible, so a
   rebuilt host can be restored from this repository plus that one file. Covers the
   pending thin-pool extension and the pre-existing manual Tailscale enrolment.
