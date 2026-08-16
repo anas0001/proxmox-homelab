@@ -25,6 +25,26 @@
 - cloud-init sets each VM's IP (static from inventory, or DHCP on the NAT net via dnsmasq on the
   host). Keep the mapping in the **gitignored** real inventory, not in examples.
 
+## Reaching lab guests from the workstation
+
+The control node runs on a workstation rather than on the host, because the labs need SSH, VNC
+and XRDP into the guests from the desk. That makes guest reachability a design requirement, not
+a convenience: an isolated lab network with no route out is unreachable for Ansible too.
+
+The host therefore acts as a **Tailscale subnet router**, advertising the lab subnet onto the
+tailnet. Lab guests become reachable from tailnet devices without a single port forward and
+without any guest touching the home LAN.
+
+This is deliberately preferred over the alternative of bridging lab guests onto `vmbr0`. The
+networking and storage labs involve guests doing genuinely disruptive things — rogue DHCP,
+spanning-tree experiments, deliberately corrupted storage — and none of that belongs on the same
+layer 2 as real household devices.
+
+An approved subnet route is reachable by **every** device on the tailnet unless an ACL narrows
+it, so the tailnet policy is load-bearing here rather than decorative. See
+`docs/security.md` section 3a, `docs/tailscale-acl.hujson`, and the procedure in
+`docs/out-of-band.md`.
+
 ## Firewall intent (enforced by `pve_security`)
 - Datacenter + host firewall enabled, **inbound default DROP**.
 - Allow `22`/`8006` from the Tailscale interface (`tailscale0` / `100.64.0.0/10`) only (plus the

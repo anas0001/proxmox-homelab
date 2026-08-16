@@ -62,6 +62,44 @@ outstanding hardening and must be done with console access available.
 
 ---
 
+### 3. Tailscale subnet router for the lab network — *pending, not yet run*
+
+**Why it is needed.** The control node runs on a workstation, not on the Proxmox host, because
+the labs require SSH, VNC and XRDP access to the guests from the desk. Lab guests sit on an
+isolated network that is reachable only from the host, so without a route they are unreachable
+from anywhere else — which makes both Ansible and interactive access impossible.
+
+Advertising the lab subnet over the tailnet solves both at once, with no port forwards and no
+guest exposed to the home LAN.
+
+**Why not Ansible.** Same reason as entry 2: `tailscale up` re-authenticates and drops the
+tunnel Ansible connects over.
+
+```bash
+# On the Proxmox host. Have console access available — this drops the tunnel.
+tailscale up --advertise-routes=10.10.10.0/24
+```
+
+Then, in the Tailscale admin console, **approve the advertised route** (Machines -> the host ->
+Route settings). Advertising alone does nothing until the route is approved.
+
+**Gate it with ACLs before relying on it.** An approved subnet route is reachable by every device
+on the tailnet unless a rule says otherwise. `docs/tailscale-acl.hujson` carries a commented
+example scoping it to the admin workstation:
+
+```
+{ "action": "accept", "src": ["tag:admin-workstation"], "dst": ["10.10.10.0/24:*"] },
+```
+
+**Verify:** from a tailnet device other than the host,
+`ping 10.10.10.11` reaches a provisioned lab guest; `tailscale status` on the host shows the
+route as advertised and approved.
+
+**Ordering:** only meaningful once `pve_network` has created the lab network and `vm_provision`
+has placed a guest on it. Until then there is nothing at the far end of the route.
+
+---
+
 ## Superseded
 
 *(none yet)*

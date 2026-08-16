@@ -47,6 +47,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   inside `make` where the vault password is already exported.
 
 ### Changed
+- Lab guests are now reachable from the workstation via a **Tailscale subnet router** on the
+  host, rather than being confined to a host-only network. The control node deliberately does
+  not run on the Proxmox host, because the labs need SSH, VNC and XRDP into the guests from the
+  desk — which makes guest reachability a design requirement rather than a convenience.
+  Documented in `docs/network.md`, with the procedure and its ACL prerequisite in
+  `docs/out-of-band.md`.
 - Hardware and storage documentation now reflects the installed host rather than an
   assumed specification: Xeon E5-2690 (8C/16T), 62 GB RAM, 223.6 GB disk, and a
   **130.27 GB** LVM-thin pool. The previous "~215 GB thin pool" figure was not achievable
