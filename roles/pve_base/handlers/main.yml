@@ -1,2 +1,11 @@
 ---
 # handlers file for pve_base
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Restart pveproxy
+  ansible.builtin.service:
+    name: pveproxy
+    state: restarted

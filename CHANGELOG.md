@@ -30,6 +30,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
   tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
   listed the tooling as a bare prerequisite without saying how to install any of it.
+- `pve_base` role: APT repository convergence for PVE 9's deb822 `.sources` format, base
+  packages, `chrony`, nested virtualisation, a hypervisor-appropriate sysctl baseline, and a
+  hard **LVM-thin pool guard** covering both data and metadata exhaustion. The guard fails the
+  run rather than warning, and runs under `--check` too, because a full thin pool corrupts the
+  filesystems of every guest in the pool simultaneously and gives no warning to the guests
+  themselves.
 - `scripts/topology-scan.sh`, wired into `make secrets-scan`: fails when tracked files
   contain a real tailnet address, a `.ts.net` name, a MAC address or a real email. gitleaks
   finds credentials but not topology, and `AGENTS.md` section 9 forbids both. The bare
