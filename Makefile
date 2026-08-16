@@ -60,8 +60,9 @@ configure:  ## Configure guest VMs (base + per-role)
 site:  ## Full run: bootstrap -> harden -> provision -> configure
 	$(BIN)ansible-playbook playbooks/site.yml $(PLAYFLAGS)
 
-secrets-scan:  ## Scan working tree for secrets
+secrets-scan:  ## Scan tracked files for secrets and real topology
 	$(BIN)pre-commit run gitleaks --all-files
+	@./scripts/topology-scan.sh
 
 VAULT_FILE := inventories/homelab/group_vars/all/vault.yml
 

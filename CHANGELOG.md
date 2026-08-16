@@ -30,6 +30,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
   tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
   listed the tooling as a bare prerequisite without saying how to install any of it.
+- `scripts/topology-scan.sh`, wired into `make secrets-scan`: fails when tracked files
+  contain a real tailnet address, a `.ts.net` name, a MAC address or a real email. gitleaks
+  finds credentials but not topology, and `AGENTS.md` section 9 forbids both. The bare
+  `100.64.0.0/10` range is allowed, being identical for every Tailscale user and naming no
+  host.
 - `scripts/host-state.sh`: strictly read-only snapshot of everything this project
   touches on the host — hardware, LVM-thin usage, APT sources, networking, guests,
   the access plane, the firewall and SSH exposure. Diff a before/after pair around
@@ -82,6 +87,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   auth key in Vault, disabled key expiry, admin 2FA) and an optional `tailscale` role spec.
 
 ### Fixed
+- `docs/06-out-of-band.md` recorded the host's real tailnet address. Redacted; the address
+  belongs in the gitignored inventory. Caught before publication by the scan now automated
+  in `scripts/topology-scan.sh`.
 - `ansible.cfg` no longer pins `vault_password_file`. The vault password lives in a gitignored
   file, so naming its path in committed configuration made the repository unusable to anyone
   without that file: `ansible-lint` and `--syntax-check` fail hard when the configured path is

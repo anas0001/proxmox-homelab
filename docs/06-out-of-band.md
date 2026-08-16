@@ -54,9 +54,10 @@ over. Automating this would mean automating the severing of the control channel 
 tailscale up
 ```
 
-**Current state:** node `pve`, address `100.116.48.34`, joined under a user identity and
-**untagged**. Tagging it (`--advertise-tags=tag:homelab`, per `docs/tailscale-acl.hujson`) is
-outstanding hardening and must be done with console access available.
+**Current state:** the host is enrolled under a user identity and is **untagged**. Its tailnet
+address is in the gitignored inventory, not here. Tagging it
+(`--advertise-tags=tag:homelab`, per `docs/tailscale-acl.hujson`) is outstanding hardening and
+must be done with console access available.
 
 **Verify:** `tailscale status` lists the host; `tailscale ip -4` returns its tailnet address.
 
