@@ -1,5 +1,5 @@
 ---
-# Apply the security hardening spec (docs/security.md).
+# Apply the security hardening spec (docs/04-security.md).
 - name: Harden Proxmox host
   hosts: pve
   become: true

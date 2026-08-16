@@ -46,7 +46,7 @@ lvs -o lv_name,lv_size,data_percent,metadata_percent
 `tailscale up` re-authenticates and **drops the tunnel** — the same tunnel Ansible connects
 over. Automating this would mean automating the severing of the control channel mid-run.
 
-`pve_tailscale_enabled` is therefore `false` by default. See `docs/security.md` §3a.
+`pve_tailscale_enabled` is therefore `false` by default. See `docs/04-security.md` §3a.
 
 ```bash
 # For reference only — how the host was enrolled. Do not run this while Tailscale
@@ -113,7 +113,7 @@ has placed a guest on it. Until then there is nothing at the far end of the rout
 Would reclaim ~33 GB for the thin pool by shrinking `pve-root` from 65.64 GB to 32 GB. Deferred:
 ext4 cannot shrink while mounted, `/` cannot be unmounted on a running system, and `/boot` sits
 on the same volume, so a failure means an unbootable host. The full procedure is in
-`docs/runbook.md`. Revisit only when the labs actually need the space.
+`docs/05-runbook.md`. Revisit only when the labs actually need the space.
 
 ---
 

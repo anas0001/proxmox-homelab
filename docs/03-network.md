@@ -21,7 +21,7 @@
   or over Tailscale — never the internet.
 - **Tailscale** provides remote access (WireGuard-based mesh, already deployed): the host joins
   the tailnet, and you reach `8006`/`22` privately over `tailscale0`. No router port-forward.
-  Tailnet ACLs limit which devices/ports are reachable (see docs/security.md section 3a).
+  Tailnet ACLs limit which devices/ports are reachable (see docs/04-security.md section 3a).
 - cloud-init sets each VM's IP (static from inventory, or DHCP on the NAT net via dnsmasq on the
   host). Keep the mapping in the **gitignored** real inventory, not in examples.
 
@@ -42,8 +42,8 @@ layer 2 as real household devices.
 
 An approved subnet route is reachable by **every** device on the tailnet unless an ACL narrows
 it, so the tailnet policy is load-bearing here rather than decorative. See
-`docs/security.md` section 3a, `docs/tailscale-acl.hujson`, and the procedure in
-`docs/out-of-band.md`.
+`docs/04-security.md` section 3a, `docs/tailscale-acl.hujson`, and the procedure in
+`docs/06-out-of-band.md`.
 
 ## Firewall intent (enforced by `pve_security`)
 - Datacenter + host firewall enabled, **inbound default DROP**.

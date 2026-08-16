@@ -22,7 +22,7 @@ Base host configuration.
 - Sysctl/limits baseline that is safe on a hypervisor.
 Tags: `bootstrap`.
 
-## pve_security   (branch: feat/pve-hardening)   — implements docs/security.md
+## pve_security   (branch: feat/pve-hardening)   — implements docs/04-security.md
 - **SSH**: template `sshd_config.d/00-hardening.conf` (key-only, no root, AllowGroups, MaxAuthTries,
   modern crypto); ensure `ssh-users` group + admin membership. Handler: reload sshd (validate first).
 - **fail2ban**: jails for `sshd` and `proxmox` (pveproxy).

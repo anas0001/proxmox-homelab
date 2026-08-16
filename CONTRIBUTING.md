@@ -38,4 +38,4 @@ merged via PR.
 
 ## Security disclosure
 Found something sensitive committed? Rotate the credential first, then open an issue/PR to scrub
-history. See `docs/security.md` section 8.
+history. See `docs/04-security.md` section 8.

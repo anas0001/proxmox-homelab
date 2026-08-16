@@ -57,7 +57,7 @@ Actual layout, as installed:
 | `pve-swap` | 8.00 GB | |
 | `pve-root` | 65.64 GB | Debian + `local` storage (`/var/lib/vz`) for ISOs and cloud images |
 | **`pve-data`** | **130.27 GB** | **the LVM-thin pool — all VM disks** |
-| unallocated | 16.00 GB | reserve; extend the pool into it when needed (`docs/runbook.md`) |
+| unallocated | 16.00 GB | reserve; extend the pool into it when needed (`docs/05-runbook.md`) |
 
 The VM inventory below *provisions* roughly 300 GB into a 130 GB pool. That 2.3x over-commit is
 the point of thin provisioning, not a mistake — but realistic consumption is what matters:
@@ -85,7 +85,7 @@ Concurrency: provision all, **power on per lab**. Largest concurrent set ~ Ceph 
 
 ## Networking
 
-See `network.md`. Summary: `vmbr0` = management/LAN; `vmbr1` = VLAN-aware isolated lab L2;
+See `03-network.md`. Summary: `vmbr0` = management/LAN; `vmbr1` = VLAN-aware isolated lab L2;
 a NAT network `10.10.10.0/24` gives lab VMs internet egress without inbound exposure.
 
 ## Rebuild / teardown

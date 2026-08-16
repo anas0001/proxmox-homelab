@@ -180,7 +180,7 @@ Raise `ControlPersist` if runs are long and the link is slow.
 ## Reaching the lab VMs
 
 Lab guests sit on an isolated network, not the home LAN, so they are not reachable from your
-workstation by default. Two options, in `docs/architecture.md`:
+workstation by default. Two options, in `docs/02-architecture.md`:
 
 - **Tailscale subnet router** — the host advertises the lab subnet
   (`tailscale up --advertise-routes=...`), you approve the route, and lab VMs become reachable
@@ -189,4 +189,4 @@ workstation by default. Two options, in `docs/architecture.md`:
 - **Run Ansible on the host** — simplest, but gives you no path to the guests from your desk.
 
 The subnet-router route requires `tailscale up`, which re-authenticates and drops the tunnel
-Ansible runs over. Record it in `docs/out-of-band.md` first, and have console access to hand.
+Ansible runs over. Record it in `docs/06-out-of-band.md` first, and have console access to hand.

@@ -2,7 +2,7 @@
 
 Security hardening for the Proxmox VE host: SSH, firewall, fail2ban, auditd and sysctl.
 
-Implements the target state in `docs/security.md`.
+Implements the target state in `docs/04-security.md`.
 
 - **SSH**: key-only, no root login, `AllowGroups`, restricted auth attempts, modern ciphers.
 - **Firewall**: Proxmox datacenter and host firewall with a default-deny inbound policy,

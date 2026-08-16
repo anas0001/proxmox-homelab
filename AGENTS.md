@@ -131,12 +131,14 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 ├── .yamllint / .ansible-lint / .pre-commit-config.yaml
 ├── .github/workflows/ci.yml # lint + gitleaks on PR
 ├── docs/
-│   ├── control-node.md      # workstation setup: venv, tooling, keys, vault, WSL2
-│   ├── architecture.md      # design + VM plan (hardware-aware)
-│   ├── security.md          # Proxmox hardening spec + secrets model
-│   ├── network.md           # bridges, VLANs, subnets
-│   ├── runbook.md           # first-run, day-2 ops, recovery
-│   └── out-of-band.md       # register of host changes NOT applied by Ansible
+│   ├── README.md            # index; the numeric prefixes are the reading order
+│   ├── 01-control-node.md   # workstation setup: venv, tooling, keys, vault, WSL2
+│   ├── 02-architecture.md   # design + VM plan (hardware-aware)
+│   ├── 03-network.md        # bridges, VLANs, subnets
+│   ├── 04-security.md       # Proxmox hardening spec + secrets model
+│   ├── 05-runbook.md        # first-run, day-2 ops, recovery
+│   ├── 06-out-of-band.md    # register of host changes NOT applied by Ansible
+│   └── tailscale-acl.hujson # tailnet policy (a policy file, not a document)
 ├── inventories/homelab/
 │   ├── hosts.example.yml    # SANITISED example — copy to hosts.yml (gitignored)
 │   ├── group_vars/
@@ -153,7 +155,7 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 │   └── configure_guests.yml
 └── roles/                   # you build these (scaffold with ansible-galaxy role init)
     ├── pve_base/            # repos, packages, chrony, thin-pool guard, no-subscription nag
-    ├── pve_security/        # hardening (see docs/security.md)
+    ├── pve_security/        # hardening (see docs/04-security.md)
     ├── pve_network/         # bridges + VLAN-aware + NAT lab net
     ├── vm_template/         # download cloud image, build cloud-init template
     ├── vm_provision/        # clone template -> VM, cloud-init, disks, snapshot 'clean'
@@ -179,7 +181,7 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 - **Tags** on plays/roles (`bootstrap`, `harden`, `network`, `provision`, `configure`) so runs
   can be scoped.
 - **Least privilege**: connect to the Proxmox API with a **dedicated token**, not `root@pam`
-  password (see docs/security.md). `become` only where needed.
+  password (see docs/04-security.md). `become` only where needed.
 - Prefer the **`community.general.proxmox_*`** modules for VM/template lifecycle over shelling
   out to `qm`/`pct`.
 
@@ -187,7 +189,7 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 
 ## 7. Security requirements
 
-Full spec in `docs/security.md`. What the hardening MUST deliver:
+Full spec in `docs/04-security.md`. What the hardening MUST deliver:
 
 - **SSH**: key-only (no password auth), no direct root login, a dedicated admin user with sudo,
   `AllowGroups`, modern ciphers/KEX, `MaxAuthTries`, fail2ban on sshd + `pveproxy`.
@@ -200,7 +202,7 @@ Full spec in `docs/security.md`. What the hardening MUST deliver:
 - **Remote access**: via **Tailscale** (WireGuard-based mesh; already in use). No router port-
   forwarding. Harden the tailnet: **ACLs** limiting which devices/users reach the host and on
   which ports, **disable key expiry** on the server node, **2FA on the Tailscale admin account**,
-  server joined with a **tagged, non-ephemeral auth key** (in Vault). See docs/security.md section 3.
+  server joined with a **tagged, non-ephemeral auth key** (in Vault). See docs/04-security.md section 3.
 - **Patching**: configure the `pve-no-subscription` repo correctly, remove the enterprise-repo
   error, document an update cadence (optionally enable unattended security updates).
 - **TLS**: replace the default self-signed cert (ACME/Let's Encrypt if reachable, else an
@@ -266,7 +268,7 @@ This repo will be public. **Nothing that could expose or endanger the setup may 
 
 ## 10. How to work in this repo (agent playbook)
 
-1. Read `docs/architecture.md`, `docs/security.md`, `docs/network.md` before writing tasks.
+1. Read `docs/02-architecture.md`, `docs/04-security.md`, `docs/03-network.md` before writing tasks.
 2. Never invent hosts/credentials. If you need the real Proxmox endpoint, token, or user, read
    them from the vaulted vars / **ask the user** — do not hardcode or guess.
 3. Build one role at a time on its own branch; scaffold with `ansible-galaxy role init`.
@@ -274,7 +276,7 @@ This repo will be public. **Nothing that could expose or endanger the setup may 
 5. Keep the thin-pool guard and safety checks in mind — destructive VM/disk actions must be
    guarded (`when:` conditions, `--limit`) and must never target the host's own disks.
 6. Update `CHANGELOG.md` and the relevant doc with every functional change.
-6a. **Any host change made outside Ansible must be recorded in `docs/out-of-band.md`
+6a. **Any host change made outside Ansible must be recorded in `docs/06-out-of-band.md`
    before it is made**, with the verbatim command and how to verify it. The repository
    plus that file must be enough to rebuild the host. Prefer codifying to recording.
 7. `make lint && make secrets-scan` must pass before you commit; open a PR.

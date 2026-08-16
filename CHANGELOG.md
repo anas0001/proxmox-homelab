@@ -47,6 +47,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   inside `make` where the vault password is already exported.
 
 ### Changed
+- `docs/` filenames now carry a numeric prefix (`01-control-node.md` ... `06-out-of-band.md`)
+  giving an explicit reading order, with `docs/README.md` as an index. Earlier entries in this
+  changelog refer to the pre-rename names, deliberately: they record what the files were called
+  when those changes were made. `tailscale-acl.hujson` is left unnumbered, being a policy file
+  rather than a document.
 - Lab guests are now reachable from the workstation via a **Tailscale subnet router** on the
   host, rather than being confined to a host-only network. The control node deliberately does
   not run on the Proxmox host, because the labs need SSH, VNC and XRDP into the guests from the
