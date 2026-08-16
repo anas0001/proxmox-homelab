@@ -1,0 +1,42 @@
+---
+# Nested virtualisation: lets a lab VM run its own VMs.
+#
+# Slow on this CPU generation, and unnecessary for the common case of running
+# containers inside a VM, but enabled so the occasional virtualisation lab
+# works at all rather than failing confusingly.
+
+- name: Enable nested virtualisation for the KVM module
+  ansible.builtin.copy:
+    dest: "/etc/modprobe.d/kvm-nested.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role: pve_base).
+      # Nested virtualisation, so lab guests can themselves run VMs.
+      options {{ pve_base_kvm_module }} nested=1
+  register: pve_base_nested_conf
+
+- name: Read the running nested-virtualisation state
+  ansible.builtin.slurp:
+    src: "/sys/module/{{ pve_base_kvm_module }}/parameters/nested"
+  register: pve_base_nested_now
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# The module cannot be reloaded while VMs are running, and reloading it under a
+# running guest would kill it. Report the discrepancy instead of forcing it:
+# the setting applies at the next reboot, which a hypervisor gets rarely and
+# deliberately.
+- name: Report when nested virtualisation needs a reboot to take effect
+  ansible.builtin.debug:
+    msg: >-
+      Nested virtualisation is configured but the running {{ pve_base_kvm_module }}
+      module reports '{{ (pve_base_nested_now.content | b64decode | trim)
+      if pve_base_nested_now.content is defined else 'unknown' }}'. The module
+      cannot be reloaded while guests are running, so this takes effect at the
+      next reboot.
+  when:
+    - pve_base_nested_now.content is defined
+    - (pve_base_nested_now.content | b64decode | trim) not in ['Y', '1']

@@ -1,2 +1,67 @@
 ---
-# tasks file for pve_base
+# Base host configuration. Runs before hardening, so it must be safe on a host
+# that is still in its post-install state.
+
+- name: Probe for the Proxmox cluster filesystem
+  ansible.builtin.stat:
+    path: /etc/pve
+  register: pve_base_etc_pve
+  changed_when: false
+  check_mode: false
+
+- name: Confirm this is a Proxmox VE host
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - pve_base_etc_pve.stat.exists
+      - pve_base_etc_pve.stat.isdir
+    fail_msg: >-
+      This role targets a Proxmox VE host. Found os_family
+      {{ ansible_facts['os_family'] }}, and /etc/pve present:
+      {{ pve_base_etc_pve.stat.exists }}. /etc/pve is Proxmox's cluster
+      filesystem and exists on every PVE node; the inventory group `pve` is
+      probably pointing somewhere unexpected.
+    success_msg: >-
+      Proxmox VE on Debian {{ ansible_facts['distribution_major_version'] }}
+      ({{ ansible_facts['distribution_release'] }}) confirmed
+
+- name: Include repository management
+  ansible.builtin.include_tasks: repos.yml
+  when: pve_base_manage_repos
+  tags: [repos]
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ pve_base_packages }}"
+    state: present
+    # Refreshed by the repository tasks; avoid a second round-trip per run.
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [packages]
+
+- name: Include time synchronisation
+  ansible.builtin.include_tasks: chrony.yml
+  when: pve_base_manage_chrony
+  tags: [time]
+
+- name: Include the thin-pool guard
+  ansible.builtin.include_tasks: thin_pool_guard.yml
+  tags: [storage, guard]
+
+- name: Include nested virtualisation
+  ansible.builtin.include_tasks: nested_virt.yml
+  when: pve_base_nested_virt
+  tags: [kvm]
+
+- name: Apply the sysctl baseline
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-pve-base.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  loop: "{{ pve_base_sysctl }}"
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+  tags: [sysctl]

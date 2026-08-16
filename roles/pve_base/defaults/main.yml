@@ -1,2 +1,102 @@
 ---
-# Overridable defaults for pve_base. Every variable here is documented.
+# Base configuration for the Proxmox host: repositories, packages, time sync,
+# thin-pool safety and nested virtualisation.
+
+# ── APT repositories ───────────────────────────────────────────────────────
+# Proxmox 9 runs on Debian 13 and uses deb822 `.sources` files, not the older
+# one-line `.list` format. Every "fix your Proxmox repos" guide written before
+# PVE 9 edits files that no longer exist here.
+#
+# deb822 has an `Enabled:` field, so a repository is disabled *in place* rather
+# than deleted. That is strictly better for configuration management: the
+# desired state becomes a value in a file rather than the absence of a file,
+# and absence is far harder to converge idempotently.
+pve_base_manage_repos: true
+
+# The enterprise repositories require a paid subscription and return 401 on
+# every `apt update` without one. Disabled rather than removed.
+pve_base_enterprise_sources:
+  - pve-enterprise
+  - ceph
+
+# The no-subscription repository is the correct source for an unsubscribed
+# host. Same packages, no support contract.
+pve_base_no_subscription_suite: trixie
+
+# ── Packages ───────────────────────────────────────────────────────────────
+# Deliberately short. A hypervisor's job is to run guests; every package on the
+# host is attack surface that no guest requires.
+pve_base_packages:
+  - vim
+  - git
+  - tmux
+  - curl
+  - jq
+  - htop
+  - lvm2          # thin-pool tooling (present on PVE, pinned here explicitly)
+  - chrony        # time sync
+  - python3-proxmoxer  # required by the community.proxmox modules
+
+# ── Time synchronisation ───────────────────────────────────────────────────
+# Clock skew breaks TLS validation, API token authentication and log
+# correlation. On a hypervisor it also propagates: guests inherit host time at
+# boot, so a wrong clock here becomes a wrong clock everywhere.
+pve_base_manage_chrony: true
+
+# ── Thin-pool guard ────────────────────────────────────────────────────────
+# THE most important task in this role.
+#
+# LVM-thin over-commits: the pool advertises more space than it has, and blocks
+# are allocated only when a guest actually writes. A pool that reaches 100% does
+# not politely refuse writes — guests take I/O errors and their filesystems
+# corrupt. The guest's own filesystem still believes it has free space, so the
+# failure is silent, and it takes out every VM in the pool at once rather than
+# just the greedy one.
+#
+# This is therefore a hard failure, not a warning. Set _fail to false to
+# downgrade it to a warning if you are deliberately running close to the limit.
+pve_base_thin_pool: "pve/data"
+pve_base_thin_pool_warn_percent: 80
+pve_base_thin_pool_fail: true
+
+# Thin-pool *metadata* exhausts independently of data and is just as fatal.
+# It is rarely watched, which is exactly why it is worth watching.
+pve_base_thin_meta_warn_percent: 80
+
+# ── Nested virtualisation ──────────────────────────────────────────────────
+# Lets a lab VM run its own VMs. Slow on this CPU generation, and unnecessary
+# for containers-in-VM (the common case), but enabled so the occasional
+# virtualisation lab works at all.
+#
+# Applied via modprobe config, which takes effect on module reload. The module
+# cannot reload while VMs are running, so an existing kvm_intel with nested=N
+# stays until the next reboot.
+pve_base_nested_virt: true
+pve_base_kvm_module: kvm_intel      # kvm_amd on an AMD host
+
+# ── sysctl baseline ────────────────────────────────────────────────────────
+# Safe on a hypervisor. Security-focused sysctl hardening belongs to
+# pve_security; these are correctness and capacity settings only.
+#
+# Bridged traffic must NOT be passed to iptables. Proxmox relies on that
+# default, and enabling it silently breaks guest networking in ways that look
+# like a guest problem rather than a host one.
+pve_base_sysctl:
+  # A hypervisor holds many more open files than a normal host: each guest
+  # disk, each tap device, each socket.
+  - name: fs.file-max
+    value: "2097152"
+  - name: fs.inotify.max_user_watches
+    value: "524288"
+  # Bridges plus many guests exhaust the default ARP/neighbour table, which
+  # manifests as intermittent guest connectivity loss that is painful to trace.
+  - name: net.ipv4.neigh.default.gc_thresh1
+    value: "1024"
+  - name: net.ipv4.neigh.default.gc_thresh2
+    value: "4096"
+  - name: net.ipv4.neigh.default.gc_thresh3
+    value: "8192"
+  # Swapping a hypervisor is far worse than swapping a workstation: it stalls
+  # every guest at once. Reclaim, but only under real pressure.
+  - name: vm.swappiness
+    value: "10"

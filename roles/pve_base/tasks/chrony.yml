@@ -1,0 +1,38 @@
+---
+# Time synchronisation.
+#
+# Clock skew is quietly corrosive on a hypervisor: it breaks TLS certificate
+# validation, invalidates API tokens, and makes log correlation across host and
+# guests meaningless. It also propagates — guests take their initial clock from
+# the host, so a wrong time here becomes a wrong time everywhere.
+
+- name: Ensure chrony is installed
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure chrony is enabled and running
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+
+- name: Check clock synchronisation
+  ansible.builtin.command: chronyc tracking
+  register: pve_base_chrony_tracking
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+# Reported rather than asserted. Chrony can take minutes to reach a synchronised
+# state after a restart, and failing the whole run because a freshly started
+# daemon has not settled yet would be a false alarm.
+- name: Report clock synchronisation state
+  ansible.builtin.debug:
+    msg: >-
+      {{ (pve_base_chrony_tracking.stdout_lines | default([]))
+         | select('search', 'Reference ID|Stratum|System time|Leap status')
+         | list }}
+  when: pve_base_chrony_tracking.rc == 0
