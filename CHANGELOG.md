@@ -36,6 +36,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   no secrets) and a runbook section for creating the tagged Tailscale auth key.
 - Runbook section on thin-pool capacity, documenting the pool extension as a deliberate
   manual operation rather than an automated one.
+- `make vault-check` — verifies the vault password file exists and successfully decrypts
+  the vault, with distinct messages for "missing" and "wrong password".
+- `TAGS=` and `CHECK=` modifiers on the playbook targets, so scoped and dry runs stay
+  inside `make` where the vault password is already exported.
 
 ### Changed
 - Hardware and storage documentation now reflects the installed host rather than an
@@ -72,10 +76,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `ansible.cfg` previously set `vault_password_file` with a trailing comment on the value line.
   Ansible's INI parser does not strip these, so the configured path included the comment text
   and every playbook run failed to find the vault password file.
-
-### Added
-- `make vault-check` — verifies the vault password file exists and successfully decrypts the
-  vault, with distinct messages for "missing" and "wrong password".
+- `docs/tailscale-acl.hujson` carried a real email address in an example ACL rule; replaced with
+  a placeholder, per the repository's own sanitisation rules.
 - Lint violations that would have failed CI on the first push: unnamed plays in `site.yml`,
   YAML spacing in `hosts.example.yml`, and a `.yamllint` setting incompatible with
   `ansible-lint`.
