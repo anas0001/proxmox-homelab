@@ -20,12 +20,15 @@ HPC) with a few `make` targets — and can be torn down and rebuilt entirely fro
 Ansible runs from your workstation and targets the Proxmox host (SSH + API) and the guest VMs
 (SSH). Storage is LVM-thin on a single disk; networking uses a management bridge, a VLAN-aware
 isolated lab bridge, and a NAT lab network. Full detail in
-[`docs/architecture.md`](docs/architecture.md).
+[`docs/02-architecture.md`](docs/02-architecture.md).
 
 ## Requirements
 - Proxmox VE installed on the host, reachable over SSH.
-- Workstation with `ansible-core`, `ansible-lint`, `yamllint`, `pre-commit`, `git`.
-- An SSH keypair and a least-privilege Proxmox API token (see [`docs/runbook.md`](docs/runbook.md)).
+- A control node with Python 3.11+ and `git`. Full setup — virtualenv, tooling versions,
+  SSH keys, inventory, vault, and WSL2 notes — is in
+  [`docs/01-control-node.md`](docs/01-control-node.md).
+
+The Proxmox API token is created **by** this repository (`pve_access`), not required before it.
 
 ## Quickstart
 ```bash
@@ -38,11 +41,12 @@ make deps      # collections + pre-commit hooks
 make check     # dry-run
 make site      # bootstrap -> harden -> network -> provision -> configure
 ```
-See [`docs/runbook.md`](docs/runbook.md) for the full first-run, token creation, and recovery.
+See [`docs/05-runbook.md`](docs/05-runbook.md) for the full first-run, token creation, and recovery.
 
 ## Repository layout
 ```
-docs/            architecture, security, network, runbook
+docs/            numbered 01-06; see docs/README.md for the reading order
+scripts/         read-only host state snapshot for before/after diffing
 inventories/     sanitised example inventory + vault template (real files gitignored)
 playbooks/       site.yml + staged playbooks
 roles/           pve_base, pve_security, pve_network, vm_template, vm_provision, guest_base
@@ -56,7 +60,7 @@ roles/           pve_base, pve_security, pve_network, vm_template, vm_provision,
 Nothing sensitive is committed. Secrets live in **Ansible Vault**; the real inventory and host
 data are **gitignored**; committed examples use RFC1918 ranges and placeholder domains.
 `pre-commit` + CI **gitleaks** block accidental secret commits. Full model:
-[`docs/security.md`](docs/security.md) and `AGENTS.md` section 9.
+[`docs/04-security.md`](docs/04-security.md) and `AGENTS.md` section 9.
 
 > This repo teaches **how** the lab is built and lets you reproduce it on **your** hardware,
 > while exposing nothing that helps anyone attack the author's host.

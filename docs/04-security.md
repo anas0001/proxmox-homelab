@@ -83,7 +83,7 @@ enrol VMs / a subnet router. Harden the tailnet like any access plane:
   **3-2-1** intent even if the offsite copy is added later.
 - Back up **`/etc/pve`, `/etc/network/interfaces`, firewall rules, and this repo** — the host is
   reproducible from repo + `/etc/pve`.
-- Document the restore procedure in `runbook.md` and **test a restore** at least once.
+- Document the restore procedure in `05-runbook.md` and **test a restore** at least once.
 
 ## 8. Secrets model (how credentials flow, safely)
 - All secrets live in **Ansible Vault**: `inventories/homelab/group_vars/**/vault.yml`

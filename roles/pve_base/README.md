@@ -13,7 +13,7 @@ Brings a fresh Proxmox VE host to a known baseline.
 - Enables nested virtualisation (`kvm_intel nested=1`).
 
 This role monitors pool *usage*; it deliberately does not manage pool *size*. Capacity is a
-one-time decision documented in `docs/runbook.md`, not continuously-converged state.
+one-time decision documented in `docs/05-runbook.md`, not continuously-converged state.
 
 ## Tags
 

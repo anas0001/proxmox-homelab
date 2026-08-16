@@ -10,6 +10,14 @@ BIN := $(shell [ -x .venv/bin/ansible ] && echo .venv/bin/)
 # Point Ansible at the vault password only when the file is actually present.
 # Deliberately not set in ansible.cfg: that path is gitignored, so hardcoding it
 # in committed config breaks linting for CI and for anyone else cloning the repo.
+# Optional modifiers for any playbook target:
+#   TAGS=access  make bootstrap     scope the run to one role
+#   CHECK=1      make bootstrap     dry run with a diff, changing nothing
+# Both compose:  CHECK=1 TAGS=access make bootstrap
+TAGFLAG   := $(if $(TAGS),--tags $(TAGS),)
+CHECKFLAG := $(if $(CHECK),--check --diff,)
+PLAYFLAGS := $(TAGFLAG) $(CHECKFLAG)
+
 VAULT_PASS := $(wildcard .vault_pass)
 ifneq ($(VAULT_PASS),)
 export ANSIBLE_VAULT_PASSWORD_FILE := $(VAULT_PASS)
@@ -38,19 +46,19 @@ ping:  ## Connectivity test to all hosts
 	$(BIN)ansible all -m ansible.builtin.ping
 
 bootstrap:  ## Base Proxmox config (repos, packages, users)
-	$(BIN)ansible-playbook playbooks/pve_bootstrap.yml
+	$(BIN)ansible-playbook playbooks/pve_bootstrap.yml $(PLAYFLAGS)
 
 harden:  ## Apply Proxmox security hardening
-	$(BIN)ansible-playbook playbooks/pve_harden.yml
+	$(BIN)ansible-playbook playbooks/pve_harden.yml $(PLAYFLAGS)
 
 provision:  ## Create/update lab VMs from templates
-	$(BIN)ansible-playbook playbooks/provision_vms.yml
+	$(BIN)ansible-playbook playbooks/provision_vms.yml $(PLAYFLAGS)
 
 configure:  ## Configure guest VMs (base + per-role)
-	$(BIN)ansible-playbook playbooks/configure_guests.yml
+	$(BIN)ansible-playbook playbooks/configure_guests.yml $(PLAYFLAGS)
 
 site:  ## Full run: bootstrap -> harden -> provision -> configure
-	$(BIN)ansible-playbook playbooks/site.yml
+	$(BIN)ansible-playbook playbooks/site.yml $(PLAYFLAGS)
 
 secrets-scan:  ## Scan working tree for secrets
 	$(BIN)pre-commit run gitleaks --all-files

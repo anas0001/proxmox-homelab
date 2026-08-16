@@ -18,12 +18,46 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Role skeletons for `pve_base`, `pve_security`, `pve_network`, `vm_template`,
   `vm_provision` and `guest_base`, each with `galaxy_info` metadata and a README
   describing its responsibilities.
+- `pve_access` role: creates the least-privilege API identity used by every later
+  API-driven role — a `labs` resource pool, two purpose-scoped custom roles
+  (`AnsibleLabVM` on the pool, `AnsibleLabStorage` on the storages), a dedicated
+  `ansible@pve` user, and an API token with privilege separation enabled. Bootstraps
+  over SSH with `pveum` rather than the API modules, which breaks the circular
+  dependency (the modules need the credential this role creates) and avoids storing
+  the Proxmox root password anywhere.
+- `docs/control-node.md`: complete control-node setup — virtualenv and tooling versions,
+  dedicated SSH key, inventory and vault, the first run, and linting the repository with no
+  host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
+  tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
+  listed the tooling as a bare prerequisite without saying how to install any of it.
+- `scripts/host-state.sh`: strictly read-only snapshot of everything this project
+  touches on the host — hardware, LVM-thin usage, APT sources, networking, guests,
+  the access plane, the firewall and SSH exposure. Diff a before/after pair around
+  any change to see exactly what moved.
+- `docs/out-of-band.md`: register of every host change not applied by Ansible, so a
+  rebuilt host can be restored from this repository plus that one file. Covers the
+  pending thin-pool extension and the pre-existing manual Tailscale enrolment.
 - `docs/tailscale-acl.hujson` starter tailnet policy (tagOwners + least-privilege ACL,
   no secrets) and a runbook section for creating the tagged Tailscale auth key.
 - Runbook section on thin-pool capacity, documenting the pool extension as a deliberate
   manual operation rather than an automated one.
+- `make vault-check` — verifies the vault password file exists and successfully decrypts
+  the vault, with distinct messages for "missing" and "wrong password".
+- `TAGS=` and `CHECK=` modifiers on the playbook targets, so scoped and dry runs stay
+  inside `make` where the vault password is already exported.
 
 ### Changed
+- `docs/` filenames now carry a numeric prefix (`01-control-node.md` ... `06-out-of-band.md`)
+  giving an explicit reading order, with `docs/README.md` as an index. Earlier entries in this
+  changelog refer to the pre-rename names, deliberately: they record what the files were called
+  when those changes were made. `tailscale-acl.hujson` is left unnumbered, being a policy file
+  rather than a document.
+- Lab guests are now reachable from the workstation via a **Tailscale subnet router** on the
+  host, rather than being confined to a host-only network. The control node deliberately does
+  not run on the Proxmox host, because the labs need SSH, VNC and XRDP into the guests from the
+  desk — which makes guest reachability a design requirement rather than a convenience.
+  Documented in `docs/network.md`, with the procedure and its ACL prerequisite in
+  `docs/out-of-band.md`.
 - Hardware and storage documentation now reflects the installed host rather than an
   assumed specification: Xeon E5-2690 (8C/16T), 62 GB RAM, 223.6 GB disk, and a
   **130.27 GB** LVM-thin pool. The previous "~215 GB thin pool" figure was not achievable
@@ -33,6 +67,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `community.general.proxmox_kvm` fail outright on current collections.
 - `Makefile` targets prefer a local `.venv` when present and fall back to `PATH`, so the
   same targets work locally and in CI.
+- `ansible.cfg` uses the native `result_format = yaml` on the default callback. The
+  previous `stdout_callback = yaml` referred to `community.general.yaml`, removed in
+  community.general 12.0.0, which made every playbook run abort before its first task.
 - `pre-commit` hook revisions updated to current releases (gitleaks 8.30.0,
   pre-commit-hooks 6.0.0, yamllint 1.38.0, ansible-lint 26.8.0).
 - Clarified that Tailscale is already deployed manually: the `tailscale-acl.hujson` policy and
@@ -55,10 +92,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `ansible.cfg` previously set `vault_password_file` with a trailing comment on the value line.
   Ansible's INI parser does not strip these, so the configured path included the comment text
   and every playbook run failed to find the vault password file.
-
-### Added
-- `make vault-check` — verifies the vault password file exists and successfully decrypts the
-  vault, with distinct messages for "missing" and "wrong password".
+- `docs/tailscale-acl.hujson` carried a real email address in an example ACL rule; replaced with
+  a placeholder, per the repository's own sanitisation rules.
 - Lint violations that would have failed CI on the first push: unnamed plays in `site.yml`,
   YAML spacing in `hosts.example.yml`, and a `.yamllint` setting incompatible with
   `ansible-lint`.
