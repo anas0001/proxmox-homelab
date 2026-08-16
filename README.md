@@ -24,8 +24,11 @@ isolated lab bridge, and a NAT lab network. Full detail in
 
 ## Requirements
 - Proxmox VE installed on the host, reachable over SSH.
-- Workstation with `ansible-core`, `ansible-lint`, `yamllint`, `pre-commit`, `git`.
-- An SSH keypair and a least-privilege Proxmox API token (see [`docs/runbook.md`](docs/runbook.md)).
+- A control node with Python 3.11+ and `git`. Full setup — virtualenv, tooling versions,
+  SSH keys, inventory, vault, and WSL2 notes — is in
+  [`docs/control-node.md`](docs/control-node.md).
+
+The Proxmox API token is created **by** this repository (`pve_access`), not required before it.
 
 ## Quickstart
 ```bash
@@ -42,7 +45,8 @@ See [`docs/runbook.md`](docs/runbook.md) for the full first-run, token creation,
 
 ## Repository layout
 ```
-docs/            architecture, security, network, runbook, out-of-band register
+docs/            control-node setup, architecture, security, network, runbook,
+                 out-of-band register
 scripts/         read-only host state snapshot for before/after diffing
 inventories/     sanitised example inventory + vault template (real files gitignored)
 playbooks/       site.yml + staged playbooks

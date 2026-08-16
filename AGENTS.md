@@ -131,6 +131,7 @@ RAM check when running concurrently: any single set fits easily in 64 GB (larges
 ├── .yamllint / .ansible-lint / .pre-commit-config.yaml
 ├── .github/workflows/ci.yml # lint + gitleaks on PR
 ├── docs/
+│   ├── control-node.md      # workstation setup: venv, tooling, keys, vault, WSL2
 │   ├── architecture.md      # design + VM plan (hardware-aware)
 │   ├── security.md          # Proxmox hardening spec + secrets model
 │   ├── network.md           # bridges, VLANs, subnets

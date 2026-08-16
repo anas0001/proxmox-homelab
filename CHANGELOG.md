@@ -25,6 +25,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   over SSH with `pveum` rather than the API modules, which breaks the circular
   dependency (the modules need the credential this role creates) and avoids storing
   the Proxmox root password anywhere.
+- `docs/control-node.md`: complete control-node setup — virtualenv and tooling versions,
+  dedicated SSH key, inventory and vault, the first run, and linting the repository with no
+  host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
+  tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
+  listed the tooling as a bare prerequisite without saying how to install any of it.
 - `scripts/host-state.sh`: strictly read-only snapshot of everything this project
   touches on the host — hardware, LVM-thin usage, APT sources, networking, guests,
   the access plane, the firewall and SSH exposure. Diff a before/after pair around
