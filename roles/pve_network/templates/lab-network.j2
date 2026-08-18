@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+#
+# Isolated lab bridge and NAT lab network. vmbr0 (management) is defined in
+# /etc/network/interfaces and is never touched by this file or this role.
+#
+# Loaded via the `source /etc/network/interfaces.d/*` line already present in
+# the base config, so this is purely additive — applying it can create or
+# update vmbr1, never vmbr0.
+
+auto {{ pve_network_lab_bridge }}
+iface {{ pve_network_lab_bridge }} inet static
+	address {{ pve_network_lab_gateway_cidr }}
+	# No uplink: `none` means this bridge switches guest traffic and the
+	# host's own {{ pve_network_lab_gateway }} address, and nothing else.
+	# Isolation from the LAN comes from there being no physical port here,
+	# not from a firewall rule that could be misconfigured.
+	bridge-ports none
+	bridge-stp off
+	bridge-fd 0
+	# VLAN-aware: a single bridge that carries multiple VLANs, each
+	# distinguished by tag, rather than one bridge per VLAN. This is what
+	# lets the Phase 2 switching/VLAN labs create and trunk VLANs without
+	# the host's network config changing per lab.
+	bridge-vlan-aware yes
+	bridge-vids 2-4094

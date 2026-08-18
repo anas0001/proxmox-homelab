@@ -157,6 +157,38 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-XX — dnsmasq left running wildcard-bound during pve_network development
+
+While verifying dnsmasq configuration syntax for `pve_network` (checking `conf-dir` defaults and
+`no-dhcp-interface` behaviour against the real package before writing the role), the following
+was run against the host:
+
+```bash
+apt-get install -y dnsmasq
+```
+
+Installing the package starts and enables its systemd unit with the stock `dnsmasq.conf`, which
+listens on the **wildcard address** (`0.0.0.0:53` and `[::]:53`, TCP and UDP) across every
+interface — including the tailnet and the management LAN — until a scoped `interface=` +
+`bind-interfaces` config is applied. No `dhcp-range` was configured, so it was not issuing DHCP
+leases, but it was answering DNS queries on interfaces it had no business reachable on.
+
+Reverted immediately on discovery:
+
+```bash
+systemctl stop dnsmasq
+systemctl disable dnsmasq
+```
+
+Confirmed nothing listening on port 53 afterward (`ss -tulnp`). **Net state:** dnsmasq is
+installed but stopped and disabled — the same state a fresh `apt install` without starting the
+service would leave it in. `pve_network`'s `dhcp.yml` tasks re-enable it only after the scoped
+`/etc/dnsmasq.d/lab-network.conf` is in place, so the wildcard-bound window does not recur when
+the role itself runs.
+
+Recorded here rather than silently fixed because the working agreement for this project is that
+every host-affecting command gets disclosed, not just the ones that turn out to matter.
+
 ### 2026-08-15 — stray ACL probe
 
 While determining the correct `pveum acl modify` syntax, the following was run against the host:

@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+#
+# DHCP and DNS for the lab subnet only. bind-interfaces + interface= make this
+# bind to {{ pve_network_lab_bridge }} specifically, not the wildcard address —
+# without both, dnsmasq listens on every interface regardless of what
+# listen-address says, which would turn the host into an unintended DHCP/DNS
+# server on the management network or the tailnet.
+bind-interfaces
+interface={{ pve_network_lab_bridge }}
+except-interface=lo
+
+domain={{ pve_network_lab_domain }}
+dhcp-range={{ pve_network_lab_dhcp_range_start }},{{ pve_network_lab_dhcp_range_end }},12h
+dhcp-option=option:router,{{ pve_network_lab_gateway }}
+dhcp-option=option:dns-server,{{ pve_network_lab_gateway }}
+
+# Lab guests resolve each other by hostname without a separate DNS server.
+domain-needed
+bogus-priv
+expand-hosts

@@ -1,0 +1,58 @@
+---
+# NAT and DHCP for the lab subnet. Lab guests reach the internet for package
+# installs through the host, and are never reachable from the LAN or the
+# tailnet inbound — this is egress-only NAT, not a port-forward of any kind.
+
+- name: Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_file: /etc/sysctl.d/61-pve-network-forward.conf
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Check for an existing MASQUERADE rule for the lab subnet
+  ansible.builtin.command: >-
+    iptables -t nat -C POSTROUTING
+    -s {{ pve_network_lab_subnet }}
+    -o {{ pve_network_wan_interface }}
+    -j MASQUERADE
+  register: pve_network_masq_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Add the MASQUERADE rule for the lab subnet
+  ansible.builtin.command: >-
+    iptables -t nat -A POSTROUTING
+    -s {{ pve_network_lab_subnet }}
+    -o {{ pve_network_wan_interface }}
+    -j MASQUERADE
+  when: pve_network_masq_check.rc != 0
+  changed_when: true
+
+# iptables rules do not survive a reboot on their own. Persisted through
+# Proxmox's own pve-firewall hook point rather than a separate persistence
+# package (iptables-persistent), so there is exactly one place NAT rules are
+# defined instead of two that could drift apart.
+- name: Persist the MASQUERADE rule across reboots
+  ansible.builtin.copy:
+    dest: /etc/network/if-up.d/proxmox-lab-nat
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # {{ ansible_managed }}
+      # Re-applies the lab-subnet MASQUERADE rule on every interface bring-up.
+      # Idempotent: -C checks before -A adds, so ifreload -a does not
+      # duplicate the rule when it re-runs this hook for unrelated interfaces.
+      iptables -t nat -C POSTROUTING -s {{ pve_network_lab_subnet }} \
+        -o {{ pve_network_wan_interface }} -j MASQUERADE 2>/dev/null || \
+      iptables -t nat -A POSTROUTING -s {{ pve_network_lab_subnet }} \
+        -o {{ pve_network_wan_interface }} -j MASQUERADE
+
+- name: Include DHCP and DNS for the lab subnet
+  ansible.builtin.include_tasks: dhcp.yml
+  when: pve_network_dhcp_enabled

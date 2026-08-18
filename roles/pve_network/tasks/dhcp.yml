@@ -1,0 +1,50 @@
+---
+# DHCP and DNS for the lab subnet via dnsmasq, bound to the lab bridge only.
+#
+# Binding to the interface rather than just the address matters: dnsmasq's
+# default bind behaviour listens on the wildcard address across ALL
+# interfaces even when `listen-address` names one. `bind-interfaces` makes it
+# actually bind to the named interface only, which is what stops it becoming
+# an unintended DHCP/DNS server on vmbr0 or the tailnet.
+
+- name: Ensure dnsmasq is installed
+  ansible.builtin.apt:
+    name: dnsmasq
+    state: present
+
+# The stock dnsmasq.conf ships almost entirely commented out, including its
+# own /etc/dnsmasq.d/ conf-dir directive — confirmed by inspecting the
+# packaged config rather than assumed. That directive is enabled here with an
+# explicit *.conf glob (rather than the commented example's bare directory,
+# which would also parse .bak/stray files), then the lab config is dropped in
+# as its own file.
+- name: Enable the /etc/dnsmasq.d conf-dir include
+  ansible.builtin.lineinfile:
+    path: /etc/dnsmasq.conf
+    regexp: '^#?conf-dir=/etc/dnsmasq\.d/?,\*\.conf$'
+    line: "conf-dir=/etc/dnsmasq.d/,*.conf"
+    state: present
+  register: pve_network_dnsmasq_confdir
+
+- name: Write the lab dnsmasq configuration
+  ansible.builtin.template:
+    src: dnsmasq-lab.conf.j2
+    dest: /etc/dnsmasq.d/lab-network.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: pve_network_dnsmasq_conf
+
+- name: Enable and start dnsmasq
+  ansible.builtin.service:
+    name: dnsmasq
+    enabled: true
+    state: started
+
+- name: Restart dnsmasq when its configuration changed
+  ansible.builtin.service:
+    name: dnsmasq
+    state: restarted
+  when: >-
+    pve_network_dnsmasq_conf is changed
+    or pve_network_dnsmasq_confdir is changed
