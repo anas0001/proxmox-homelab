@@ -106,6 +106,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   auth key in Vault, disabled key expiry, admin 2FA) and an optional `tailscale` role spec.
 
 ### Fixed
+- CI actions bumped to their Node 24 releases (`actions/checkout@v7`,
+  `actions/setup-python@v7`, `gitleaks/gitleaks-action@v3`) — GitHub Actions runners now force
+  Node 24 regardless of what an action declares, and the previous pins (`checkout@v4`,
+  `setup-python@v5`, `gitleaks-action@v2`) all still declared `node20`, which surfaced as a
+  deprecation warning on every run. Confirmed against each action's `action.yml` before
+  bumping; gitleaks-action's v3 migration notes confirm no behaviour change, only the runtime.
 - `docs/06-out-of-band.md` recorded the host's real tailnet address. Redacted; the address
   belongs in the gitignored inventory. Caught before publication by the scan now automated
   in `scripts/topology-scan.sh`.
