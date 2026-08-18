@@ -29,6 +29,8 @@ pve_base_no_subscription_suite: trixie
 pve_base_packages:
   - vim
   - git
+  - lm-sensors
+  - fancontrol
   - tmux
   - curl
   - jq

@@ -30,6 +30,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
   tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
   listed the tooling as a bare prerequisite without saying how to install any of it.
+- `pve_base` role: sensor and fan detection, read-only. Reports every hwmon driver and
+  every fan/PWM channel the kernel exposes. `sensors-detect` is not run automatically — it
+  probes over I2C/SMBus with writes, an acceptable risk at a console and not one to take
+  unattended over SSH on a hypervisor — so detection reads what the kernel already exposed
+  rather than probing for it. Fan data is read directly from `/sys/class/hwmon`, not through
+  `fancontrol`, since `fancontrol`'s own detection (`pwmconfig`) is interactive-only for the
+  same reason. No fan control is implemented.
 - `pve_base` role: APT repository convergence for PVE 9's deb822 `.sources` format, base
   packages, `chrony`, nested virtualisation, a hypervisor-appropriate sysctl baseline, and a
   hard **LVM-thin pool guard** covering both data and metadata exhaustion. The guard fails the

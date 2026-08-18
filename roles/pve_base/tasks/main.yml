@@ -53,6 +53,14 @@
   when: pve_base_nested_virt
   tags: [kvm]
 
+- name: Include sensor detection
+  ansible.builtin.include_tasks: sensors.yml
+  tags: [sensors]
+
+- name: Include fan detection
+  ansible.builtin.include_tasks: fans.yml
+  tags: [sensors, fans]
+
 - name: Apply the sysctl baseline
   ansible.posix.sysctl:
     name: "{{ item.name }}"
