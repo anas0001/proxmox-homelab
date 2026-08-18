@@ -39,6 +39,25 @@ that still reported `[fail]` because the interface wasn't up yet. That makes it 
 verifier, not a pre-apply `validate:` gate, which is how it's used here: after `ifreload -a`
 brings `vmbr1` up, `-c` then confirms the live bridge matches the file.
 
+## What this role does not do: forward tailnet traffic to the lab subnet
+
+Reaching lab guests from a workstation over the tailnet (`docs/03-network.md`) needs the kernel
+to forward traffic arriving on `tailscale0` toward `vmbr1`, not just NAT egress. This role does
+not add that rule.
+
+Checked on the host rather than assumed: `tailscaled` already installs and maintains its own
+`ts-forward` chain, jumped to from `FORWARD`, accepting traffic to and from `tailscale0` — present
+even before any route is advertised, and torn down on `tailscaled --cleanup`. A hand-written rule
+here would duplicate state Tailscale already owns and could drift from it across versions, for no
+capability gained. Enabling subnet routing is therefore just `tailscale up
+--advertise-routes=10.10.10.0/24` (`docs/06-out-of-band.md` §3, `pve_network_lab_subnet` here),
+with no additional firewall work.
+
+The one thing worth carrying forward: if `pve_security` ever sets a default-deny `FORWARD`
+policy, it needs to either leave `ts-forward`'s jump ahead of that policy or explicitly accept
+it — otherwise a stricter firewall could silently break subnet routing that works today only
+because nothing currently drops it.
+
 ## Tags
 
 `network`, plus `nat` and `dhcp` for scoping.

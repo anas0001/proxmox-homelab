@@ -40,6 +40,14 @@ networking and storage labs involve guests doing genuinely disruptive things —
 spanning-tree experiments, deliberately corrupted storage — and none of that belongs on the same
 layer 2 as real household devices.
 
+Routing traffic from the tailnet into `10.10.10.0/24` needs the kernel to forward it, not just
+`pve_network`'s outbound NAT. That half is provided by `tailscaled` itself: it installs and
+maintains its own `iptables` `FORWARD` rules for `tailscale0` whenever it runs, independent of
+whether a route is currently advertised. `pve_network` does not duplicate this — see
+`roles/pve_network/README.md` — so activating subnet routing is purely the `tailscale up
+--advertise-routes=10.10.10.0/24` step in `docs/06-out-of-band.md`, with no additional
+firewall rule required.
+
 An approved subnet route is reachable by **every** device on the tailnet unless an ACL narrows
 it, so the tailnet policy is load-bearing here rather than decorative. See
 `docs/04-security.md` section 3a, `docs/tailscale-acl.hujson`, and the procedure in
