@@ -1,0 +1,9 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Re-applies the lab-subnet MASQUERADE rule on every interface bring-up.
+# Idempotent: -C checks before -A adds, so ifreload -a does not
+# duplicate the rule when it re-runs this hook for unrelated interfaces.
+iptables -t nat -C POSTROUTING -s {{ pve_network_lab_subnet }} \
+  -o {{ pve_network_wan_interface }} -j MASQUERADE 2>/dev/null || \
+iptables -t nat -A POSTROUTING -s {{ pve_network_lab_subnet }} \
+  -o {{ pve_network_wan_interface }} -j MASQUERADE
