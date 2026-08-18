@@ -1,0 +1,101 @@
+---
+# Proxmox firewall: default-deny inbound, with SSH/web UI allowed only from
+# two independent sources (Tailscale, management LAN) so neither is a single
+# point of failure (teach/01-decisions.md D4).
+#
+# Managed as plain files under /etc/pve/firewall/ and /etc/pve/nodes/<node>/,
+# over the same SSH connection every other role in this project uses —
+# deliberately NOT via the community.proxmox firewall modules, which
+# authenticate through the API token. pve_access scoped that token away from
+# Sys.Audit/Sys.Modify on purpose (verified: a live call against
+# /cluster/firewall/options returns 403 Permission check failed), and
+# widening it just to manage the firewall would undermine that role's whole
+# design. SSH/root already has everything needed and is what every other
+# role in this project already does.
+#
+# Two files, deliberately: cluster.fw carries enable + the default policy
+# (policy_in only exists at cluster level); host.fw carries the actual allow
+# rules for THIS node, because "Rules at host level take precedence over
+# rules at datacenter level" (pve-firewall(8)) — the tightest, most specific
+# rules should win, not the broadest ones.
+#
+# Sequencing (D4 rule 3): the [IPSET management] allow-sources and the host
+# rules that reference them are written FIRST. The cluster-wide enable +
+# default-deny policy is written and applied LAST, and only after the host
+# rules are confirmed present. Applying a default-deny policy before its
+# allow rules exist — even for a few seconds between two file writes — would
+# leave the host briefly unreachable.
+
+# ── Step 1: the allow rules (host.fw), applied with the firewall still off ──
+
+- name: Render the host firewall (allow rules for this host)
+  ansible.builtin.template:
+    src: host.fw.j2
+    dest: "/etc/pve/nodes/{{ ansible_facts['hostname'] }}/host.fw"
+    owner: root
+    group: www-data
+    mode: "0640"
+  register: pve_security_hostfw
+
+- name: Render the cluster firewall management IPSet and rules, firewall left OFF
+  ansible.builtin.template:
+    src: cluster.fw.j2
+    dest: /etc/pve/firewall/cluster.fw
+    owner: root
+    group: www-data
+    mode: "0640"
+    # `enable` is deliberately templated to 0 by this same file at this point
+    # in the run — see the template. It is flipped to 1 by the next task,
+    # only after these allow rules are already the ones on disk.
+  register: pve_security_clusterfw
+
+- name: Apply the allow-rule files (firewall still disabled)
+  ansible.builtin.command: pve-firewall compile
+  when: pve_security_hostfw is changed or pve_security_clusterfw is changed
+  changed_when: true
+  register: pve_security_compile_check
+  failed_when: pve_security_compile_check.rc != 0
+
+# ── Step 2: only now, turn the firewall on ──────────────────────────────
+# Re-templates cluster.fw with `enable: 1`. Two applies of the same template
+# rather than a runtime toggle inside it keeps "rules exist" and "policy is
+# enforced" as two separate, individually observable steps in the run's
+# output — exactly the two steps D4 requires to happen in that order.
+
+- name: Enable the cluster firewall with default-deny inbound
+  ansible.builtin.template:
+    src: cluster.fw.j2
+    dest: /etc/pve/firewall/cluster.fw
+    owner: root
+    group: www-data
+    mode: "0640"
+  vars:
+    pve_security_firewall_enabled: true
+  register: pve_security_clusterfw_enabled
+  notify: Restart pve-firewall
+
+- name: Flush handlers so the firewall reload happens now, and can be verified
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the firewall is active with the expected default policy
+  ansible.builtin.command: pve-firewall status
+  register: pve_security_fw_status
+  changed_when: false
+  check_mode: false
+
+- name: Report firewall status
+  ansible.builtin.debug:
+    var: pve_security_fw_status.stdout_lines
+
+- name: Fail if the firewall did not come up enabled
+  ansible.builtin.assert:
+    # Confirmed real output format on this host: "Status: enabled/running" or
+    # "Status: enabled/running (pending changes)" briefly after a config
+    # change. "Status: disabled/running" is the pre-hardening baseline.
+    that: "'Status: enabled' in pve_security_fw_status.stdout"
+    fail_msg: >-
+      pve-firewall status does not report enabled after this role rendered
+      cluster.fw with enable: 1. Investigate before assuming the host is
+      protected — do not re-run this role blind. Actual output:
+      {{ pve_security_fw_status.stdout }}
+    success_msg: "Proxmox firewall confirmed active"

@@ -1,2 +1,51 @@
 ---
 # handlers file for pve_security
+#
+# "Reload sshd" rather than restart: a reload re-reads configuration for the
+# running daemon and new connections without dropping already-established
+# sessions — including, critically, the one Ansible itself is connected
+# through. A restart briefly tears the listening socket down; on some
+# systemd/socket-activation configurations that is harmless, but reload is
+# the strictly safer choice here and there is no reason to take the risk.
+#
+# The template task's `validate: "sshd -t -f %s"` already stops a genuinely
+# broken file from ever being written, so this handler's own `sshd -t` is a
+# second, defence-in-depth check immediately before the reload — catching the
+# case where something else changed sshd_config.d between the write and now.
+
+- name: Reload sshd
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  listen: Reload sshd
+
+- name: Reload sshd
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+  listen: Reload sshd
+
+# pve-firewall reads /etc/pve/firewall/*.fw and /etc/pve/nodes/*/host.fw
+# directly — there is no separate "reload" distinct from re-reading the
+# cluster filesystem, so `pve-firewall compile` (dry-run) followed by
+# `restart` (apply) is the equivalent of sshd's test-then-reload pair above.
+- name: Restart pve-firewall
+  ansible.builtin.command: pve-firewall compile
+  changed_when: false
+  listen: Restart pve-firewall
+
+- name: Restart pve-firewall
+  ansible.builtin.command: pve-firewall restart
+  changed_when: true
+  listen: Restart pve-firewall
+
+# augenrules compiles /etc/audit/rules.d/*.rules into /etc/audit/audit.rules
+# and loads them; auditd itself does not re-read rules.d on a plain service
+# reload. Confirmed against auditd(8) rather than assumed.
+- name: Reload auditd rules
+  ansible.builtin.command: augenrules --load
+  changed_when: true
+
+- name: Restart fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted

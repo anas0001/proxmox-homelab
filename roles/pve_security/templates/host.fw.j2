@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+#
+# Host-specific rules — these take precedence over cluster.fw's rules
+# (pve-firewall(8): "Rules at host level take precedence over rules at
+# datacenter level"). The default-deny POLICY still comes from cluster.fw
+# (policy_in: DROP); this file only carries the exceptions to it.
+#
+# `enable: 1` here only turns host-level rule evaluation on — it does not by
+# itself enable the firewall. That happens once, at the cluster level, in the
+# task that templates cluster.fw with enable: 1 — deliberately the LAST step
+# in this role's firewall sequence, after these rules already exist on disk.
+#
+# Naming the IPSet exactly `management` (cluster.fw) already makes Proxmox
+# auto-generate host-access rules for it (GUI 8006, SSH 22, VNC 5900:5999,
+# SPICE 3128, port range 60000:60050) — confirmed via `pve-firewall compile`,
+# which shows both the auto-generated and these explicit rules for the same
+# ports. The explicit rules below are kept anyway: relying only on Proxmox's
+# undocumented-in-detail magic-name behaviour would make this file's actual
+# access policy invisible without reading generated iptables output.
+
+[OPTIONS]
+enable: 1
+log_level_in: info
+
+[RULES]
+# +management is the standard IPSet (cluster.fw), pre-authorised by Proxmox
+# for GUI/VNC/SPICE/SSH host access — both allow-sources (Tailscale, mgmt
+# LAN) are members of it, so this one line covers both.
+{% for port in pve_security_firewall_ports %}
+IN ACCEPT -source +management -p tcp -dport {{ port }} # port {{ port }}
+{% endfor %}
+
+IN DROP # everything else inbound denied by the cluster policy anyway; explicit for clarity

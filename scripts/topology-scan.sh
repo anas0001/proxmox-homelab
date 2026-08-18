@@ -39,11 +39,15 @@ while IFS= read -r hit; do
     report "MAC address: $hit"
 done < <(git grep -nIE '\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b' -- . 2>/dev/null)
 
-# Real-looking email addresses. example.com and the GitHub noreply form are fine.
+# Real-looking email addresses. example.com and the GitHub noreply form are
+# fine, and so is @openssh.com/@libssh.org — those are RFC 4251 vendor-
+# extension suffixes on SSH algorithm names (e.g.
+# chacha20-poly1305@openssh.com), not addresses, and this repo names several
+# of them in roles/pve_security's KEX/cipher/MAC lists.
 while IFS= read -r hit; do
     report "email address: $hit"
 done < <(git grep -nIE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' -- . 2>/dev/null \
-         | grep -vE 'example\.(com|org)|users\.noreply\.github\.com|@pve|@pam|noreply@anthropic\.com|admin@|you@|git@')
+         | grep -vE 'example\.(com|org)|users\.noreply\.github\.com|@pve|@pam|noreply@anthropic\.com|admin@|you@|git@|@openssh\.com|@libssh\.org')
 
 if [ "$fail" -ne 0 ]; then
     echo

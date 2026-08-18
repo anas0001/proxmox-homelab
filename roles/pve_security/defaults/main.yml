@@ -1,2 +1,98 @@
 ---
-# Overridable defaults for pve_security. Every variable here is documented.
+# Security hardening for the Proxmox host, per docs/04-security.md.
+#
+# This role is sequenced around one fact: it runs over the exact SSH
+# connection it is about to restrict, on a host with an awkward-but-possible
+# physical console. Every setting below is real; the ORDER tasks/main.yml
+# applies them in is what keeps this role from locking anyone out, and that
+# order is not something defaults/ can express — see tasks/main.yml and
+# teach/01-decisions.md D4 for the sequencing rules themselves.
+
+# ── Identity ─────────────────────────────────────────────────────────────
+# The admin user Ansible switches to using once its key is proven to work.
+# No daily use of root: this user gets sudo, root SSH login is then disabled.
+pve_security_admin_user: svc_admin
+pve_security_admin_group: sudo
+pve_security_admin_ssh_key: "{{ vault_guest_admin_ssh_pubkey }}"
+# The PRIVATE half, on the control node, used to verify the admin login
+# actually works before root/password access is disabled. Matches the key
+# already used for guests (inventories/homelab/hosts.yml) — same dedicated
+# lab keypair, not the personal/GitHub key. Deliberately required rather than
+# silently skipped when unset: see the explicit failure in tasks/ssh.yml.
+pve_security_admin_ssh_key_path: ~/.ssh/id_ed25519_homelab
+pve_security_ssh_allow_group: ssh-users
+
+# ── SSH ──────────────────────────────────────────────────────────────────
+pve_security_ssh_port: 22
+pve_security_ssh_max_auth_tries: 3
+pve_security_ssh_login_grace_time: 20
+# Modern-only. Sourced from Mozilla's "Modern" OpenSSH guidance, cross-checked
+# against `ssh -Q kex/cipher/mac` on this host's OpenSSH 10.0 (`ssh -V`:
+# OpenSSH_10.0p2) rather than copied from an older guide that might list an
+# algorithm this version lacks. mlkem768x25519-sha256 is OpenSSH 10's NIST-
+# standardised post-quantum-hybrid KEX; sntrup761x25519 (pre-standard, wider
+# older-client support) is kept alongside it rather than replaced by it.
+pve_security_ssh_kex_algorithms:
+  - mlkem768x25519-sha256
+  - sntrup761x25519-sha512@openssh.com
+  - curve25519-sha256
+  - curve25519-sha256@libssh.org
+pve_security_ssh_ciphers:
+  - chacha20-poly1305@openssh.com
+  - aes256-gcm@openssh.com
+  - aes128-gcm@openssh.com
+pve_security_ssh_macs:
+  - hmac-sha2-512-etm@openssh.com
+  - hmac-sha2-256-etm@openssh.com
+
+# ── Firewall ─────────────────────────────────────────────────────────────
+# Two independent allow-sources for :22 and :8006, so neither is a single
+# point of failure. Real values (mgmt CIDR, Tailscale CIDR) come from
+# inventories/homelab/group_vars/pve/main.yml and hosts.yml, per-host.
+pve_security_mgmt_cidr: "192.168.1.0/24"          # overridden per-host
+pve_security_allow_tailscale: true
+pve_security_tailscale_cidr: "100.64.0.0/10"
+pve_security_firewall_ports:
+  - "{{ pve_security_ssh_port }}"
+  - 8006
+
+# ── fail2ban ─────────────────────────────────────────────────────────────
+pve_security_enable_fail2ban: true
+pve_security_fail2ban_maxretry: 5
+pve_security_fail2ban_bantime: 3600
+pve_security_fail2ban_findtime: 600
+
+# ── auditd ───────────────────────────────────────────────────────────────
+pve_security_enable_auditd: true
+
+# ── sysctl hardening ─────────────────────────────────────────────────────
+# Correctness/capacity sysctls live in pve_base; these are security-focused
+# and deliberately kept separate so the two concerns don't get tangled in one
+# list. Values applied only where they differ from a Debian 13 default that
+# was checked on this host rather than assumed — e.g. rp_filter is currently
+# 2 (loose) here, not the also-common 0 (off).
+pve_security_sysctl:
+  - name: net.ipv4.conf.all.rp_filter
+    value: "1"            # strict reverse-path filtering (was: 2, loose)
+  - name: net.ipv4.conf.default.rp_filter
+    value: "1"
+  - name: net.ipv4.tcp_syncookies
+    value: "1"             # SYN-flood mitigation (already Debian default; asserted, not just set)
+  - name: net.ipv4.conf.all.accept_redirects
+    value: "0"
+  - name: net.ipv4.conf.default.accept_redirects
+    value: "0"
+  - name: net.ipv4.conf.all.send_redirects
+    value: "0"             # was: 1 on this host — a host should not act as a router advertising redirects
+  - name: net.ipv4.conf.default.send_redirects
+    value: "0"
+  - name: net.ipv4.conf.all.accept_source_route
+    value: "0"
+  - name: net.ipv4.conf.default.accept_source_route
+    value: "0"
+  - name: kernel.kptr_restrict
+    value: "1"              # hide kernel pointers from unprivileged reads
+  - name: kernel.dmesg_restrict
+    value: "1"
+  - name: kernel.randomize_va_space
+    value: "2"              # full ASLR (already Debian default; asserted)

@@ -1,0 +1,95 @@
+---
+# SSH hardening — the sequencing here is safety-critical (teach/01-decisions.md
+# D4). The rule: prove the new access path works before removing the old one.
+#
+# Concretely: create svc_admin and its key, then verify an SSH login as
+# svc_admin actually succeeds, BEFORE any task disables root login or password
+# auth. If step 2 fails, nothing has removed the current (root, password-auth)
+# access — the run simply stops with root still reachable exactly as before.
+
+# ── Step 1: build the new path ──────────────────────────────────────────
+
+- name: Ensure the ssh-users group exists
+  ansible.builtin.group:
+    name: "{{ pve_security_ssh_allow_group }}"
+    state: present
+
+- name: Create the admin user
+  ansible.builtin.user:
+    name: "{{ pve_security_admin_user }}"
+    groups: "{{ [pve_security_admin_group, pve_security_ssh_allow_group] }}"
+    append: true
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Authorise the admin SSH key
+  ansible.posix.authorized_key:
+    user: "{{ pve_security_admin_user }}"
+    key: "{{ pve_security_admin_ssh_key }}"
+    state: present
+    exclusive: true
+
+- name: Grant passwordless sudo to the admin group
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ pve_security_admin_group }}-nopasswd"
+    owner: root
+    group: root
+    mode: "0440"
+    # visudo-validated on write: a syntactically broken sudoers.d file is
+    # ignored by sudo with a syslog warning, not a hard failure, so `validate`
+    # is the only thing standing between a typo here and a user who quietly
+    # has no sudo the next time they need it.
+    content: "%{{ pve_security_admin_group }} ALL=(ALL) NOPASSWD:ALL\n"
+    validate: "visudo -cf %s"
+
+# ── Step 2: prove the new path before touching the old one ────────────────
+# This is the gate. Everything below it assumes root/password access remains
+# fully intact unless this specific check passes.
+
+- name: Check the admin private key exists on the control node
+  ansible.builtin.stat:
+    path: "{{ pve_security_admin_ssh_key_path | expanduser }}"
+  delegate_to: localhost
+  become: false
+  register: pve_security_admin_key_stat
+  changed_when: false
+  check_mode: false
+
+- name: Fail with an explicit message when the admin private key is missing
+  ansible.builtin.fail:
+    msg: >-
+      {{ pve_security_admin_ssh_key_path }} was not found on the control
+      node, so the admin login cannot be verified before locking anything
+      down. Generate the keypair (see docs/01-control-node.md), or override
+      pve_security_admin_ssh_key_path. Root/password access is UNCHANGED —
+      this task only stops the run from proceeding blind.
+  when: not pve_security_admin_key_stat.stat.exists
+
+- name: Verify SSH login as the admin user succeeds
+  ansible.builtin.command: >-
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o ConnectTimeout=10 -i {{ pve_security_admin_ssh_key_path }}
+    {{ pve_security_admin_user }}@{{ ansible_host | default(inventory_hostname) }}
+    echo admin-login-ok
+  delegate_to: localhost
+  become: false
+  register: pve_security_admin_login_check
+  changed_when: false
+  failed_when: >-
+    pve_security_admin_login_check.rc != 0 or
+    'admin-login-ok' not in pve_security_admin_login_check.stdout
+
+# ── Step 3: only now, close the old path ───────────────────────────────────
+# Everything from here on assumes the check above passed. If it did not, the
+# play already failed and none of this ran.
+
+- name: Render the hardened sshd configuration
+  ansible.builtin.template:
+    src: 00-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "sshd -t -f %s"
+  notify: Reload sshd

@@ -157,6 +157,78 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-18 — auditd rules test-loaded (`auditctl -R`) during pve_security recon
+
+Before writing `pve_security`'s audit rules, an initial draft using the older `-w`/`-p` watch
+syntax was loaded with `auditctl -R` to confirm it was accepted — it was, but with the warning
+"Old style watch rules are slower". `audit.rules(7)` confirms `-w` is deprecated in favour of
+syscall-rule form (`-F path=... -F perm=...`). The rules were rewritten in the modern form and
+reloaded to confirm they load without the warning and expand to the expected syscall set
+(`auditctl -l` after loading showed the full expanded `-S open,bind,truncate,...` list per
+rule). `auditd` was installed for this test and purged afterward:
+
+```bash
+apt-get install -y auditd
+auditctl -R /tmp/test-rules   # loaded and inspected twice, once per syntax form
+auditctl -D                   # clear loaded rules
+systemctl stop auditd
+systemctl disable auditd
+apt-get purge -y auditd
+```
+
+**Net state:** auditd not installed, no rules loaded — the same state as before recon. Confirmed
+via `dpkg -l auditd` showing no `ii`/`rc` entry after the purge.
+
+### 2026-08-18 — cluster firewall briefly enabled to confirm `pve-firewall status` output format
+
+Before writing `pve_security`'s assertion that the firewall came up enabled after being
+configured, the real output of `pve-firewall status` needed confirming rather than guessed —
+the Proxmox man page does not document the exact string. The following was run:
+
+```bash
+cat > /etc/pve/firewall/cluster.fw <<EOF
+[OPTIONS]
+enable: 1
+policy_in: ACCEPT
+EOF
+```
+
+`policy_in: ACCEPT` was used deliberately — this briefly enabled the firewall daemon with a
+permissive default policy, not a default-deny one, so no inbound traffic was actually blocked
+during the test. Confirmed `Status: enabled/running (pending changes)`, then reverted
+immediately:
+
+```bash
+rm -f /etc/pve/firewall/cluster.fw
+```
+
+Confirmed back to `Status: disabled/running` afterward — the pre-hardening baseline. **Net
+state: firewall disabled, same as before the test**, and at no point was inbound traffic
+actually restricted.
+
+### 2026-08-18 — fail2ban test-installed and purged twice during pve_security recon
+
+Before writing the `pve_security` fail2ban tasks, the package was installed to check whether it
+ships a `pveproxy` filter by default (it does not — one had to be written) and to confirm the
+`backend = auto` default correctly targets journald on a host with no `/var/log/auth.log`
+(Debian 13 ships no `rsyslog` by default; confirmed absent). Installed and purged once for that
+recon, then installed a second time to run `fail2ban-regex` against the real
+`/var/log/pveproxy/access.log` and confirm the hand-written `proxmox` filter actually matches
+real 401 lines (it matched 12 of 12157 real log lines) rather than trusting the regex
+unverified. Both times:
+
+```bash
+apt-get install -y --no-install-recommends fail2ban
+# ... verification ...
+systemctl stop fail2ban
+systemctl disable fail2ban
+apt-get purge -y fail2ban
+rm -f /etc/fail2ban/filter.d/proxmox.conf
+```
+
+**Net state:** fail2ban not installed — the same state as before recon. Confirmed via
+`dpkg -l fail2ban` showing no `ii`/`rc` entry after each purge.
+
 ### 2026-08-XX — dnsmasq left running wildcard-bound during pve_network development
 
 While verifying dnsmasq configuration syntax for `pve_network` (checking `conf-dir` defaults and

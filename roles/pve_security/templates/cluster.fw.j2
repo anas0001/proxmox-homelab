@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+#
+# Cluster-wide firewall config. On this single-node setup this still governs
+# the ONLY node, but policy_in/policy_out only exist at this level — a node's
+# own host.fw can only set its own `enable` flag and rules, per pve-firewall(8).
+#
+# `management` is Proxmox's standard IPSet name: host firewalls automatically
+# trust it for GUI/VNC/SPICE/SSH (pve-firewall(8), "Standard IP set
+# management"). Both allow-sources go in here so neither is a single point of
+# failure (teach/01-decisions.md D4) — Tailscale AND the management LAN.
+
+[OPTIONS]
+enable: {{ 1 if pve_security_firewall_enabled | default(false) else 0 }}
+policy_in: DROP
+policy_out: ACCEPT
+ebtables: 1
+
+[IPSET management]
+{{ pve_security_mgmt_cidr }} # management LAN
+{% if pve_security_allow_tailscale %}
+{{ pve_security_tailscale_cidr }} # Tailscale (100.64.0.0/10 CGNAT range)
+{% endif %}

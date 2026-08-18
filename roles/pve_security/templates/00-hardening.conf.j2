@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+#
+# Loaded via the `Include /etc/ssh/sshd_config.d/*.conf` line already present
+# in the stock /etc/ssh/sshd_config — this file is additive, not a rewrite of
+# the base config. Directives here override matching directives earlier in
+# the include order by filename; `00-` sorts first among sshd_config.d files,
+# so this is the first thing applied and nothing in this directory can
+# silently override it afterward.
+#
+# APPLIED ONLY AFTER {{ pve_security_admin_user }}'s SSH login was verified
+# from the control node. If you are reading this while locked out, the
+# console/recovery steps are in docs/05-runbook.md.
+
+Port {{ pve_security_ssh_port }}
+
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowGroups {{ pve_security_ssh_allow_group }}
+
+MaxAuthTries {{ pve_security_ssh_max_auth_tries }}
+LoginGraceTime {{ pve_security_ssh_login_grace_time }}
+X11Forwarding no
+AllowAgentForwarding no
+
+KexAlgorithms {{ pve_security_ssh_kex_algorithms | join(',') }}
+Ciphers {{ pve_security_ssh_ciphers | join(',') }}
+MACs {{ pve_security_ssh_macs | join(',') }}
