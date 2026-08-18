@@ -1,2 +1,91 @@
 ---
-# tasks file for pve_network
+# Network topology: the isolated lab bridge, the NAT lab network, and (once
+# vm_provision exists) the path lab guests reach the internet through.
+#
+# vmbr0 — the management bridge — is NEVER edited by this role, in any task,
+# under any condition. That is the single rule this whole role is built
+# around, and the reason is chosen deliberately rather than by accident: the
+# base /etc/network/interfaces already carries `source /etc/network/interfaces.d/*`,
+# so every change here lands in a NEW drop-in file. Applying it can only ever
+# add vmbr1 and its NAT plumbing; there is no code path in this role capable of
+# rewriting vmbr0's stanza, which is precisely the thing that could otherwise
+# sever the Ansible connection mid-run.
+
+- name: Probe for ifupdown2
+  ansible.builtin.stat:
+    path: /usr/sbin/ifreload
+  register: pve_network_ifreload
+  changed_when: false
+  check_mode: false
+
+- name: Fail if ifupdown2 is not installed
+  ansible.builtin.assert:
+    that: pve_network_ifreload.stat.exists
+    fail_msg: >-
+      /usr/sbin/ifreload not found. This role applies network changes with
+      `ifreload -a` (ifupdown2), which reloads only the interfaces that
+      changed rather than restarting the whole networking stack. Proxmox
+      installs ifupdown2 by default; install it before running this role.
+    success_msg: "ifupdown2 confirmed"
+
+- name: Confirm vmbr0's own config file is untouched by this role
+  ansible.builtin.stat:
+    path: /etc/network/interfaces
+  register: pve_network_base_before
+  changed_when: false
+  check_mode: false
+
+- name: Write the lab bridge and NAT network drop-in
+  ansible.builtin.template:
+    src: lab-network.j2
+    dest: "/etc/network/interfaces.d/20-{{ pve_network_lab_bridge }}-lab.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  # No `validate:` here. ifupdown2's ifquery -c checks a file against LIVE
+  # interface state, so it fails on a brand-new bridge that legitimately isn't
+  # up yet — verified interactively before writing this task, against a
+  # correct config, on this exact host. It is a post-apply verifier, not a
+  # pre-apply one, so it runs as a handler after the reload instead.
+  notify:
+    - Reload networking
+    - Verify the lab bridge matches its configuration
+
+# Belt and braces on top of "this role never templates that path": prove it,
+# every run, rather than merely asserting it in a comment. A future edit that
+# accidentally widened the template's `dest` would be caught here instead of
+# on the host.
+- name: Verify vmbr0's own config file was not modified
+  ansible.builtin.stat:
+    path: /etc/network/interfaces
+  register: pve_network_base_after
+  changed_when: false
+  check_mode: false
+
+- name: Fail loudly if vmbr0's config file changed
+  ansible.builtin.assert:
+    that: pve_network_base_before.stat.checksum == pve_network_base_after.stat.checksum
+    fail_msg: >-
+      /etc/network/interfaces changed during this role's run. This role must
+      never modify it — stop here rather than reload networking against an
+      unexpected diff. Investigate before proceeding.
+    success_msg: "vmbr0's configuration file is unchanged, as required"
+
+# Flushed here rather than left to run at the natural end of the role, so that
+# the bridge is confirmed live before nat_dhcp.yml tries to bind dnsmasq to it.
+- name: Apply and verify the network configuration now, before NAT/DHCP need it
+  ansible.builtin.meta: flush_handlers
+
+- name: Confirm the lab bridge is up
+  ansible.builtin.command: "ip -br link show {{ pve_network_lab_bridge }}"
+  register: pve_network_bridge_state
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Report lab bridge state
+  ansible.builtin.debug:
+    msg: "{{ pve_network_bridge_state.stdout | default('bridge not yet present (check mode)') }}"
+
+- name: Include NAT and DHCP for the lab subnet
+  ansible.builtin.include_tasks: nat_dhcp.yml

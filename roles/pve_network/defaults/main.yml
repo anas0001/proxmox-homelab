@@ -1,2 +1,35 @@
 ---
-# Overridable defaults for pve_network. Every variable here is documented.
+# Network topology for the Proxmox host: the isolated lab bridge and the NAT
+# lab network. vmbr0 (management) is never touched by this role — see the
+# design note in tasks/main.yml.
+
+# ── vmbr1: isolated, VLAN-aware lab bridge ──────────────────────────────────
+# No uplink port. It exists purely as a switching fabric between guests and
+# the host — Phase 2's VLAN/switching labs trunk into it, and the NAT network
+# below rides on it for lab guests that just need connectivity rather than a
+# VLAN topology to practise on.
+pve_network_lab_bridge: vmbr1
+pve_network_lab_bridge_comment: "isolated lab L2 (no uplink) - VLAN-aware"
+
+# ── NAT lab network ──────────────────────────────────────────────────────────
+# Lab guests get outbound internet for package installs without being
+# reachable from the LAN or exposed to it. The host is the NAT gateway and
+# also the DHCP/DNS server for this subnet — no extra guest VM required just
+# to make lab networking work.
+pve_network_lab_subnet: "10.10.10.0/24"
+pve_network_lab_gateway: "10.10.10.1"
+pve_network_lab_gateway_cidr: "10.10.10.1/24"
+pve_network_lab_dhcp_range_start: "10.10.10.100"
+pve_network_lab_dhcp_range_end: "10.10.10.200"
+pve_network_lab_domain: "homelab.local"
+
+# The uplink NAT rules masquerade through, so guest traffic looks like it
+# comes from the host. Must match the interface carrying the host's own
+# internet route (vmbr0 in this design), not a guest-facing bridge.
+pve_network_wan_interface: vmbr0
+
+# dnsmasq provides DHCP + DNS for the lab subnet. Scoped to bind only
+# pve_network_lab_bridge — binding-interface rather than binding-address,
+# so it never listens on vmbr0 or the tailnet, which would turn the host into
+# an unintended DHCP/DNS server for the management network or the tailnet.
+pve_network_dhcp_enabled: true

@@ -1,2 +1,30 @@
 ---
 # handlers file for pve_network
+
+# Applies the drop-in without restarting networking wholesale. ifupdown2
+# diffs the running state against the rendered config and reloads only what
+# changed — vmbr0 (unmodified, per the checksum check in tasks/main.yml) is
+# left running.
+- name: Reload networking
+  ansible.builtin.command: ifreload -a
+  changed_when: true
+
+# Runs after "Reload networking" (handlers fire in the order they are listed
+# here, not the order they were notified) so the bridge is live by the time
+# ifquery -c inspects it. -c compares a file against running state, so it
+# cannot meaningfully check an interface that has not been brought up yet.
+#
+# Skipped entirely under --check. "Reload networking" is a plain command task
+# with no explicit check-mode override, so whether it actually runs under
+# --check is a real question this role does not need to settle: either way,
+# a --check run makes no promise that the bridge is live afterwards, so a
+# verification step that depends on it being live has nothing trustworthy to
+# check. Real verification happens on the real apply.
+- name: Verify the lab bridge matches its configuration
+  ansible.builtin.command: >-
+    ifquery -c -i /etc/network/interfaces.d/20-{{ pve_network_lab_bridge }}-lab.conf
+    {{ pve_network_lab_bridge }}
+  register: pve_network_verify
+  changed_when: false
+  when: not ansible_check_mode
+  failed_when: pve_network_verify.rc != 0 or '[fail]' in pve_network_verify.stdout

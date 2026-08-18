@@ -30,6 +30,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to
   tell bufferbloat from packet loss when the link to the host is slow. `README.md` previously
   listed the tooling as a bare prerequisite without saying how to install any of it.
+- `pve_network` role: `vmbr1` (VLAN-aware, no uplink) plus egress-only NAT and DHCP/DNS
+  for the `10.10.10.0/24` lab subnet. Applied entirely through a NEW drop-in file under
+  `/etc/network/interfaces.d/`, since the base config already sources that directory —
+  `vmbr0` is never templated, and the role stats `/etc/network/interfaces` before and after
+  to fail loudly if that ever stops being true. `iptables` MASQUERADE and `dnsmasq` (bound to
+  `vmbr1` only via `bind-interfaces` + `interface=`, not the wildcard address) ride on top.
 - `pve_base` role: sensor and fan detection, read-only. Reports every hwmon driver and
   every fan/PWM channel the kernel exposes. `sensors-detect` is not run automatically — it
   probes over I2C/SMBus with writes, an acceptable risk at a console and not one to take
