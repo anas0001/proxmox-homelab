@@ -37,21 +37,12 @@
 # package (iptables-persistent), so there is exactly one place NAT rules are
 # defined instead of two that could drift apart.
 - name: Persist the MASQUERADE rule across reboots
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: proxmox-lab-nat.j2
     dest: /etc/network/if-up.d/proxmox-lab-nat
     owner: root
     group: root
     mode: "0755"
-    content: |
-      #!/bin/sh
-      # {{ ansible_managed }}
-      # Re-applies the lab-subnet MASQUERADE rule on every interface bring-up.
-      # Idempotent: -C checks before -A adds, so ifreload -a does not
-      # duplicate the rule when it re-runs this hook for unrelated interfaces.
-      iptables -t nat -C POSTROUTING -s {{ pve_network_lab_subnet }} \
-        -o {{ pve_network_wan_interface }} -j MASQUERADE 2>/dev/null || \
-      iptables -t nat -A POSTROUTING -s {{ pve_network_lab_subnet }} \
-        -o {{ pve_network_wan_interface }} -j MASQUERADE
 
 - name: Include DHCP and DNS for the lab subnet
   ansible.builtin.include_tasks: dhcp.yml
