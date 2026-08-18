@@ -1,0 +1,71 @@
+---
+# Fan detection: enumerate every fan the kernel exposes, and report its current
+# speed. Read-only — no fan curve, no PWM write, no fancontrol configuration.
+#
+# fancontrol's own detection step is `pwmconfig`, which is interactive-only: it
+# repeatedly stops each fan in turn to work out which PWM output drives it, and
+# refuses to run non-interactively for exactly that reason (stopping the wrong
+# fan on a live hypervisor is not a mistake you want automation making). So
+# this reads the hwmon fan1_input/pwm* files directly instead — the same data
+# fancontrol itself would eventually act on, without touching anything.
+#
+# On this hardware `hwmon0` is dell_smm, which exposes fan speed and PWM
+# control natively as a kernel driver — fancontrol's userspace daemon would be
+# a second layer on top of a control path the kernel already provides. That is
+# a design question for when fan control is actually implemented, not this
+# task, which only reads.
+
+- name: Discover fan speed inputs across all hwmon devices
+  ansible.builtin.find:
+    paths: /sys/class/hwmon
+    patterns: "hwmon*"
+    file_type: directory
+  register: pve_base_hwmon_for_fans
+  changed_when: false
+  check_mode: false
+
+- name: List fan and PWM files per hwmon device
+  ansible.builtin.find:
+    paths: "{{ item.path }}"
+    patterns:
+      - "fan*_input"
+      - "pwm[0-9]"
+    use_regex: false
+    file_type: file
+  loop: "{{ pve_base_hwmon_for_fans.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: pve_base_fan_files_raw
+  changed_when: false
+  check_mode: false
+
+- name: Read each fan input and PWM value
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: >-
+    {{ pve_base_fan_files_raw.results
+       | map(attribute='files') | flatten }}
+  loop_control:
+    label: "{{ item.path }}"
+  register: pve_base_fan_values
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Report detected fans
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.path }}: {{ item.content | b64decode | trim }}
+      {{ 'RPM' if 'fan' in item.item.path else '(PWM 0-255)' }}
+  loop: "{{ pve_base_fan_values.results }}"
+  loop_control:
+    label: "{{ item.item.path | default('n/a') }}"
+  when: item.content is defined
+
+- name: Warn when no fans were found
+  ansible.builtin.debug:
+    msg: >-
+      No fan*_input files found under /sys/class/hwmon. Either this hardware
+      reports fans through a different interface (check `sensors` output from
+      the sensors task), or no fan driver has loaded.
+  when: (pve_base_fan_files_raw.results | map(attribute='files') | flatten | length) == 0
