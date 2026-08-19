@@ -10,67 +10,78 @@
 # skip these tasks: the point of configuration management is that the state is
 # declared and enforced, so a rebuilt host lands in the same place without
 # anyone remembering which box to tick.
-
-# Checked first rather than letting lineinfile fail on a missing path. On a
-# host that never had Ceph, `ceph.sources` legitimately does not exist, and
-# creating a disabled definition for a repository the installer never wrote
-# would be inventing state.
-- name: Check which subscription-only repository files exist
-  ansible.builtin.stat:
-    path: "/etc/apt/sources.list.d/{{ item }}.sources"
-  loop: "{{ pve_base_enterprise_sources }}"
-  loop_control:
-    label: "{{ item }}.sources"
-  register: pve_base_ent_stat
-  changed_when: false
-  check_mode: false
-
-# `Enabled: false` disables the repository in place. Appending at end-of-file
-# when the key is absent is safe *for these files specifically*, because each
-# is a single deb822 stanza — in a multi-stanza file (debian.sources has two)
-# an appended key would silently attach to the last stanza only. This role
-# never touches a multi-stanza file.
-- name: Disable the subscription-only repositories
-  ansible.builtin.lineinfile:
-    path: "{{ item.stat.path }}"
-    regexp: '^\s*Enabled:'
-    line: "Enabled: false"
-    create: false
-    state: present
-  loop: "{{ pve_base_ent_stat.results | selectattr('stat.exists') | list }}"
-  loop_control:
-    label: "{{ item.stat.path | basename }}"
-  notify: Update apt cache
-
-- name: Ensure the no-subscription repository is present and enabled
-  ansible.builtin.copy:
-    dest: /etc/apt/sources.list.d/pve-no-subscription.sources
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Managed by Ansible (role: pve_base). Manual edits will be overwritten.
-      #
-      # The no-subscription repository carries the same packages as the
-      # enterprise one without a support contract. It is the correct source for
-      # an unsubscribed host, and having it enabled is what stops `apt update`
-      # failing on the enterprise repository's 401.
-      Types: deb
-      URIs: http://download.proxmox.com/debian/pve
-      Suites: {{ pve_base_no_subscription_suite }}
-      Components: pve-no-subscription
-      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-      Enabled: true
-  notify: Update apt cache
-
-# The web UI's "no valid subscription" dialog is deliberately NOT suppressed.
 #
-# Every method of removing it patches a JavaScript file shipped by the
-# pve-manager package. That means modifying a vendor-supplied file, which any
-# package update overwrites — so the change silently reverts and has to be
-# re-applied after every upgrade, and the regex that matches it is specific to
-# the pve-manager version it was written against.
-#
-# Trading a permanently fragile, self-reverting patch on a vendor file for the
-# removal of one harmless dialog is a poor deal. Buying a subscription is the
-# supported fix; living with the dialog is the honest one.
+# Everything wrapped in one block tagged `repos`. A tag on the `include_tasks`
+# call in main.yml applies only to that include statement, not to the tasks
+# it pulls in — confirmed empirically (an untagged version of a sibling file
+# in pve_security produced zero child tasks under its matching --tags filter,
+# not even shown as skipped). The block-level tag is the fix.
+- name: APT repository tasks
+  tags: [repos]
+  block:
+    # Checked first rather than letting lineinfile fail on a missing path. On
+    # a host that never had Ceph, `ceph.sources` legitimately does not exist,
+    # and creating a disabled definition for a repository the installer never
+    # wrote would be inventing state.
+    - name: Check which subscription-only repository files exist
+      ansible.builtin.stat:
+        path: "/etc/apt/sources.list.d/{{ item }}.sources"
+      loop: "{{ pve_base_enterprise_sources }}"
+      loop_control:
+        label: "{{ item }}.sources"
+      register: pve_base_ent_stat
+      changed_when: false
+      check_mode: false
+
+    # `Enabled: false` disables the repository in place. Appending at
+    # end-of-file when the key is absent is safe *for these files
+    # specifically*, because each is a single deb822 stanza — in a
+    # multi-stanza file (debian.sources has two) an appended key would
+    # silently attach to the last stanza only. This role never touches a
+    # multi-stanza file.
+    - name: Disable the subscription-only repositories
+      ansible.builtin.lineinfile:
+        path: "{{ item.stat.path }}"
+        regexp: '^\s*Enabled:'
+        line: "Enabled: false"
+        create: false
+        state: present
+      loop: "{{ pve_base_ent_stat.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.stat.path | basename }}"
+      notify: Update apt cache
+
+    - name: Ensure the no-subscription repository is present and enabled
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (role: pve_base). Manual edits will be overwritten.
+          #
+          # The no-subscription repository carries the same packages as the
+          # enterprise one without a support contract. It is the correct source
+          # for an unsubscribed host, and having it enabled is what stops
+          # `apt update` failing on the enterprise repository's 401.
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: {{ pve_base_no_subscription_suite }}
+          Components: pve-no-subscription
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+          Enabled: true
+      notify: Update apt cache
+
+    # The web UI's "no valid subscription" dialog is deliberately NOT
+    # suppressed.
+    #
+    # Every method of removing it patches a JavaScript file shipped by the
+    # pve-manager package. That means modifying a vendor-supplied file, which
+    # any package update overwrites — so the change silently reverts and has
+    # to be re-applied after every upgrade, and the regex that matches it is
+    # specific to the pve-manager version it was written against.
+    #
+    # Trading a permanently fragile, self-reverting patch on a vendor file
+    # for the removal of one harmless dialog is a poor deal. Buying a
+    # subscription is the supported fix; living with the dialog is the
+    # honest one.

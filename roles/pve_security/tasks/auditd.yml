@@ -2,52 +2,61 @@
 # auditd baseline: watch the files whose modification is a security event on
 # this host — cluster config, SSH config, and account/privilege databases —
 # plus privileged command execution.
+#
+# Everything wrapped in one block tagged `auditd`, for the same reason
+# ssh.yml's tasks are: a tag on the `include_tasks` call in main.yml applies
+# only to that include statement, not to the tasks it pulls in.
+- name: Auditd configuration tasks
+  tags: [auditd]
+  block:
+    - name: Install auditd
+      ansible.builtin.apt:
+        name: auditd
+        state: present
 
-- name: Install auditd
-  ansible.builtin.apt:
-    name: auditd
-    state: present
+    - name: Write the baseline audit rules
+      ansible.builtin.copy:
+        dest: /etc/audit/rules.d/60-pve-security.rules
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          # {{ ansible_managed }}
+          #
+          # `-F path=... -F perm=...` syntax throughout, not the older
+          # `-w`/`-p` watch form: auditctl on this host reports "Old style
+          # watch rules are slower", and audit.rules(7) confirms -w is
+          # deprecated in favour of this syscall-rule form, which
+          # additionally requires (and gets) an explicit arch for better
+          # performance.
 
-- name: Write the baseline audit rules
-  ansible.builtin.copy:
-    dest: /etc/audit/rules.d/60-pve-security.rules
-    owner: root
-    group: root
-    mode: "0640"
-    content: |
-      # {{ ansible_managed }}
-      #
-      # `-F path=... -F perm=...` syntax throughout, not the older `-w`/`-p`
-      # watch form: auditctl on this host reports "Old style watch rules are
-      # slower", and audit.rules(7) confirms -w is deprecated in favour of
-      # this syscall-rule form, which additionally requires (and gets) an
-      # explicit arch for better performance.
+          # /etc/pve is Proxmox's cluster filesystem: VM configs, firewall
+          # rules, user/ACL definitions. A write here is a
+          # Proxmox-config-changing event regardless of whether it went
+          # through the API, pveum, or a direct edit.
+          -a always,exit -F arch=b64 -F path=/etc/pve -F perm=wa -k pve_config
 
-      # /etc/pve is Proxmox's cluster filesystem: VM configs, firewall rules,
-      # user/ACL definitions. A write here is a Proxmox-config-changing event
-      # regardless of whether it went through the API, pveum, or a direct edit.
-      -a always,exit -F arch=b64 -F path=/etc/pve -F perm=wa -k pve_config
+          -a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config -F perm=wa -k sshd_config
+          -a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config.d -F perm=wa -k sshd_config
 
-      -a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config -F perm=wa -k sshd_config
-      -a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config.d -F perm=wa -k sshd_config
+          -a always,exit -F arch=b64 -F path=/etc/sudoers -F perm=wa -k sudoers
+          -a always,exit -F arch=b64 -F path=/etc/sudoers.d -F perm=wa -k sudoers
 
-      -a always,exit -F arch=b64 -F path=/etc/sudoers -F perm=wa -k sudoers
-      -a always,exit -F arch=b64 -F path=/etc/sudoers.d -F perm=wa -k sudoers
+          -a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity
+          -a always,exit -F arch=b64 -F path=/etc/shadow -F perm=wa -k identity
+          -a always,exit -F arch=b64 -F path=/etc/group -F perm=wa -k identity
+          -a always,exit -F arch=b64 -F path=/etc/gshadow -F perm=wa -k identity
 
-      -a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity
-      -a always,exit -F arch=b64 -F path=/etc/shadow -F perm=wa -k identity
-      -a always,exit -F arch=b64 -F path=/etc/group -F perm=wa -k identity
-      -a always,exit -F arch=b64 -F path=/etc/gshadow -F perm=wa -k identity
+          # Privileged execution: any exec by uid 0 after the boot-time auid
+          # is set (auid!=4294967295 excludes kernel/init processes that
+          # have no login session, which would otherwise flood this rule at
+          # every boot).
+          -a always,exit -F arch=b64 -S execve -F euid=0 -F auid!=4294967295 -k priv_exec
+      register: pve_security_audit_rules
+      notify: Reload auditd rules
 
-      # Privileged execution: any exec by uid 0 after the boot-time auid is
-      # set (auid!=4294967295 excludes kernel/init processes that have no
-      # login session, which would otherwise flood this rule at every boot).
-      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid!=4294967295 -k priv_exec
-  register: pve_security_audit_rules
-  notify: Reload auditd rules
-
-- name: Ensure auditd is enabled and running
-  ansible.builtin.service:
-    name: auditd
-    enabled: true
-    state: started
+    - name: Ensure auditd is enabled and running
+      ansible.builtin.service:
+        name: auditd
+        enabled: true
+        state: started

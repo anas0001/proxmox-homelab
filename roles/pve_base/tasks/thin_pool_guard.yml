@@ -16,83 +16,92 @@
 #
 # Runs in check mode as well: a dry run that skips the safety check is
 # precisely backwards.
+#
+# Everything wrapped in one block tagged `storage`/`guard`. A tag on the
+# `include_tasks` call in main.yml applies only to that include statement,
+# not to the tasks it pulls in — see repos.yml's header comment for how this
+# was confirmed.
+- name: Thin-pool guard tasks
+  tags: [storage, guard]
+  block:
+    - name: Read thin-pool usage
+      ansible.builtin.command: >-
+        lvs {{ pve_base_thin_pool }}
+        --noheadings --nosuffix --units b
+        -o lv_name,vg_name,lv_size,data_percent,metadata_percent
+        --separator ','
+      register: pve_base_lvs
+      changed_when: false
+      check_mode: false
+      failed_when: false
 
-- name: Read thin-pool usage
-  ansible.builtin.command: >-
-    lvs {{ pve_base_thin_pool }}
-    --noheadings --nosuffix --units b
-    -o lv_name,vg_name,lv_size,data_percent,metadata_percent
-    --separator ','
-  register: pve_base_lvs
-  changed_when: false
-  check_mode: false
-  failed_when: false
+    - name: Fail when the thin pool cannot be read
+      ansible.builtin.assert:
+        that:
+          - pve_base_lvs.rc == 0
+          - pve_base_lvs.stdout | trim | length > 0
+        fail_msg: >-
+          Could not read thin pool '{{ pve_base_thin_pool }}':
+          {{ pve_base_lvs.stderr | default('no output') | trim }}.
+          Set pve_base_thin_pool to the correct <vg>/<lv> for this host.
+        success_msg: "Thin pool {{ pve_base_thin_pool }} is readable"
 
-- name: Fail when the thin pool cannot be read
-  ansible.builtin.assert:
-    that:
-      - pve_base_lvs.rc == 0
-      - pve_base_lvs.stdout | trim | length > 0
-    fail_msg: >-
-      Could not read thin pool '{{ pve_base_thin_pool }}':
-      {{ pve_base_lvs.stderr | default('no output') | trim }}.
-      Set pve_base_thin_pool to the correct <vg>/<lv> for this host.
-    success_msg: "Thin pool {{ pve_base_thin_pool }} is readable"
+    - name: Parse thin-pool usage
+      ansible.builtin.set_fact:
+        pve_base_pool_data_pct: "{{ (pve_base_lvs.stdout | trim).split(',')[3] | default(0) | float }}"
+        pve_base_pool_meta_pct: "{{ (pve_base_lvs.stdout | trim).split(',')[4] | default(0) | float }}"
+        pve_base_pool_size_gb: "{{ ((pve_base_lvs.stdout | trim).split(',')[2] | default(0) | float / 1073741824) | round(2) }}"
 
-- name: Parse thin-pool usage
-  ansible.builtin.set_fact:
-    pve_base_pool_data_pct: "{{ (pve_base_lvs.stdout | trim).split(',')[3] | default(0) | float }}"
-    pve_base_pool_meta_pct: "{{ (pve_base_lvs.stdout | trim).split(',')[4] | default(0) | float }}"
-    pve_base_pool_size_gb: "{{ ((pve_base_lvs.stdout | trim).split(',')[2] | default(0) | float / 1073741824) | round(2) }}"
+    - name: Report thin-pool usage
+      ansible.builtin.debug:
+        msg: >-
+          Thin pool {{ pve_base_thin_pool }}: {{ pve_base_pool_size_gb }} GB,
+          data {{ pve_base_pool_data_pct }}% (limit {{ pve_base_thin_pool_warn_percent }}%),
+          metadata {{ pve_base_pool_meta_pct }}% (limit {{ pve_base_thin_meta_warn_percent }}%)
 
-- name: Report thin-pool usage
-  ansible.builtin.debug:
-    msg: >-
-      Thin pool {{ pve_base_thin_pool }}: {{ pve_base_pool_size_gb }} GB,
-      data {{ pve_base_pool_data_pct }}% (limit {{ pve_base_thin_pool_warn_percent }}%),
-      metadata {{ pve_base_pool_meta_pct }}% (limit {{ pve_base_thin_meta_warn_percent }}%)
+    # Deliberately two assertions rather than one, so the failure message
+    # names which of the two limits was breached. "Something is over 80%" is
+    # a worse 3 a.m. message than "metadata is over 80%".
+    - name: Guard against thin-pool data exhaustion
+      ansible.builtin.assert:
+        that:
+          - pve_base_pool_data_pct | float < pve_base_thin_pool_warn_percent | float
+        fail_msg: >-
+          THIN POOL DATA AT {{ pve_base_pool_data_pct }}% (limit
+          {{ pve_base_thin_pool_warn_percent }}%). A pool that reaches 100%
+          corrupts the filesystems of every guest using it, not just the one
+          that filled it. Free space before provisioning anything further:
+          delete stale snapshots (they grow as a VM diverges from them),
+          remove unused VM disks, or extend the pool (see
+          docs/05-runbook.md).
+        success_msg: >-
+          Thin pool data at {{ pve_base_pool_data_pct }}%, under the
+          {{ pve_base_thin_pool_warn_percent }}% limit
+      when: pve_base_thin_pool_fail
 
-# Deliberately two assertions rather than one, so the failure message names
-# which of the two limits was breached. "Something is over 80%" is a worse
-# 3 a.m. message than "metadata is over 80%".
-- name: Guard against thin-pool data exhaustion
-  ansible.builtin.assert:
-    that:
-      - pve_base_pool_data_pct | float < pve_base_thin_pool_warn_percent | float
-    fail_msg: >-
-      THIN POOL DATA AT {{ pve_base_pool_data_pct }}% (limit
-      {{ pve_base_thin_pool_warn_percent }}%). A pool that reaches 100% corrupts
-      the filesystems of every guest using it, not just the one that filled it.
-      Free space before provisioning anything further: delete stale snapshots
-      (they grow as a VM diverges from them), remove unused VM disks, or extend
-      the pool (see docs/05-runbook.md).
-    success_msg: >-
-      Thin pool data at {{ pve_base_pool_data_pct }}%, under the
-      {{ pve_base_thin_pool_warn_percent }}% limit
-  when: pve_base_thin_pool_fail
+    - name: Guard against thin-pool metadata exhaustion
+      ansible.builtin.assert:
+        that:
+          - pve_base_pool_meta_pct | float < pve_base_thin_meta_warn_percent | float
+        fail_msg: >-
+          THIN POOL METADATA AT {{ pve_base_pool_meta_pct }}% (limit
+          {{ pve_base_thin_meta_warn_percent }}%). Metadata exhausts
+          independently of data and is equally fatal — the pool goes
+          read-only with data space still free. Extend it with:
+            lvextend --poolmetadatasize +1G {{ pve_base_thin_pool }}
+        success_msg: >-
+          Thin pool metadata at {{ pve_base_pool_meta_pct }}%, under the
+          {{ pve_base_thin_meta_warn_percent }}% limit
+      when: pve_base_thin_pool_fail
 
-- name: Guard against thin-pool metadata exhaustion
-  ansible.builtin.assert:
-    that:
-      - pve_base_pool_meta_pct | float < pve_base_thin_meta_warn_percent | float
-    fail_msg: >-
-      THIN POOL METADATA AT {{ pve_base_pool_meta_pct }}% (limit
-      {{ pve_base_thin_meta_warn_percent }}%). Metadata exhausts independently of
-      data and is equally fatal — the pool goes read-only with data space still
-      free. Extend it with:
-        lvextend --poolmetadatasize +1G {{ pve_base_thin_pool }}
-    success_msg: >-
-      Thin pool metadata at {{ pve_base_pool_meta_pct }}%, under the
-      {{ pve_base_thin_meta_warn_percent }}% limit
-  when: pve_base_thin_pool_fail
-
-- name: Warn when the guard is disabled and a limit is breached
-  ansible.builtin.debug:
-    msg: >-
-      WARNING: thin pool over limit (data {{ pve_base_pool_data_pct }}%,
-      metadata {{ pve_base_pool_meta_pct }}%) but pve_base_thin_pool_fail is
-      false, so the run continues. A full pool corrupts guest filesystems.
-  when:
-    - not pve_base_thin_pool_fail
-    - (pve_base_pool_data_pct | float >= pve_base_thin_pool_warn_percent | float)
-      or (pve_base_pool_meta_pct | float >= pve_base_thin_meta_warn_percent | float)
+    - name: Warn when the guard is disabled and a limit is breached
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: thin pool over limit (data {{ pve_base_pool_data_pct }}%,
+          metadata {{ pve_base_pool_meta_pct }}%) but pve_base_thin_pool_fail
+          is false, so the run continues. A full pool corrupts guest
+          filesystems.
+      when:
+        - not pve_base_thin_pool_fail
+        - (pve_base_pool_data_pct | float >= pve_base_thin_pool_warn_percent | float)
+          or (pve_base_pool_meta_pct | float >= pve_base_thin_meta_warn_percent | float)

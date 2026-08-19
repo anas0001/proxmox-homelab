@@ -9,64 +9,72 @@
 # `auto` correctly detects this and uses the systemd backend; a log-file
 # backend pointed at a path that will never exist would silently never ban
 # anything.
+#
+# Everything wrapped in one block tagged `fail2ban`, for the same reason
+# ssh.yml's tasks are: a tag on the `include_tasks` call in main.yml applies
+# only to that include statement, not to the tasks it pulls in.
+- name: Fail2ban configuration tasks
+  tags: [fail2ban]
+  block:
+    - name: Install fail2ban
+      ansible.builtin.apt:
+        name: fail2ban
+        state: present
 
-- name: Install fail2ban
-  ansible.builtin.apt:
-    name: fail2ban
-    state: present
+    - name: Write the pveproxy filter
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/filter.d/proxmox.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # {{ ansible_managed }}
+          #
+          # Matches pveproxy's access.log 401 responses. Confirmed against a
+          # real log line on this host (address redacted; format shown):
+          #   ::ffff:203.0.113.42 - - [18/08/2026:23:07:02 +0100] \
+          #     "GET /api2/json/cluster/resources HTTP/1.1" 401 -
+          # The address is IPv4-mapped IPv6 (::ffff:x.x.x.x) because pveproxy
+          # listens dual-stack; fail2ban's <HOST> matches either form.
+          # Verified with fail2ban-regex against the real log: see
+          # docs/06-out-of-band.md.
+          [Definition]
+          failregex = ^<HOST> - .* "(GET|POST|PUT|DELETE) .*" 401
+          ignoreregex =
+      notify: Restart fail2ban
 
-- name: Write the pveproxy filter
-  ansible.builtin.copy:
-    dest: /etc/fail2ban/filter.d/proxmox.conf
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # {{ ansible_managed }}
-      #
-      # Matches pveproxy's access.log 401 responses. Confirmed against a real
-      # log line on this host (address redacted; format shown):
-      #   ::ffff:203.0.113.42 - - [18/08/2026:23:07:02 +0100] \
-      #     "GET /api2/json/cluster/resources HTTP/1.1" 401 -
-      # The address is IPv4-mapped IPv6 (::ffff:x.x.x.x) because pveproxy
-      # listens dual-stack; fail2ban's <HOST> matches either form. Verified
-      # with fail2ban-regex against the real log: see docs/06-out-of-band.md.
-      [Definition]
-      failregex = ^<HOST> - .* "(GET|POST|PUT|DELETE) .*" 401
-      ignoreregex =
-  notify: Restart fail2ban
+    - name: Configure the sshd and proxmox jails
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/pve-security.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # {{ ansible_managed }}
+          [DEFAULT]
+          bantime = {{ pve_security_fail2ban_bantime }}
+          findtime = {{ pve_security_fail2ban_findtime }}
+          maxretry = {{ pve_security_fail2ban_maxretry }}
 
-- name: Configure the sshd and proxmox jails
-  ansible.builtin.copy:
-    dest: /etc/fail2ban/jail.d/pve-security.conf
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # {{ ansible_managed }}
-      [DEFAULT]
-      bantime = {{ pve_security_fail2ban_bantime }}
-      findtime = {{ pve_security_fail2ban_findtime }}
-      maxretry = {{ pve_security_fail2ban_maxretry }}
+          [sshd]
+          enabled = true
+          # backend left at fail2ban's own `auto` default rather than pinned
+          # here: this host has no /var/log/auth.log (no rsyslog), so `auto`
+          # resolves to the systemd journal backend. Pinning
+          # `backend = systemd` explicitly was considered and rejected —
+          # `auto` self-corrects if rsyslog is ever added later; a hardcoded
+          # systemd backend would not.
+          port = {{ pve_security_ssh_port }}
 
-      [sshd]
-      enabled = true
-      # backend left at fail2ban's own `auto` default rather than pinned here:
-      # this host has no /var/log/auth.log (no rsyslog), so `auto` resolves to
-      # the systemd journal backend. Pinning `backend = systemd` explicitly
-      # was considered and rejected — `auto` self-corrects if rsyslog is ever
-      # added later; a hardcoded systemd backend would not.
-      port = {{ pve_security_ssh_port }}
+          [proxmox]
+          enabled = true
+          port = 8006
+          filter = proxmox
+          logpath = /var/log/pveproxy/access.log
+      notify: Restart fail2ban
 
-      [proxmox]
-      enabled = true
-      port = 8006
-      filter = proxmox
-      logpath = /var/log/pveproxy/access.log
-  notify: Restart fail2ban
-
-- name: Ensure fail2ban is enabled and running
-  ansible.builtin.service:
-    name: fail2ban
-    enabled: true
-    state: started
+    - name: Ensure fail2ban is enabled and running
+      ansible.builtin.service:
+        name: fail2ban
+        enabled: true
+        state: started

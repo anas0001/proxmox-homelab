@@ -14,58 +14,66 @@
 # a second layer on top of a control path the kernel already provides. That is
 # a design question for when fan control is actually implemented, not this
 # task, which only reads.
+#
+# Everything wrapped in one block tagged `sensors`/`fans`. A tag on the
+# `include_tasks` call in main.yml applies only to that include statement,
+# not to the tasks it pulls in — see repos.yml's header comment for how this
+# was confirmed.
+- name: Fan detection tasks
+  tags: [sensors, fans]
+  block:
+    - name: Discover fan speed inputs across all hwmon devices
+      ansible.builtin.find:
+        paths: /sys/class/hwmon
+        patterns: "hwmon*"
+        file_type: directory
+      register: pve_base_hwmon_for_fans
+      changed_when: false
+      check_mode: false
 
-- name: Discover fan speed inputs across all hwmon devices
-  ansible.builtin.find:
-    paths: /sys/class/hwmon
-    patterns: "hwmon*"
-    file_type: directory
-  register: pve_base_hwmon_for_fans
-  changed_when: false
-  check_mode: false
+    - name: List fan and PWM files per hwmon device
+      ansible.builtin.find:
+        paths: "{{ item.path }}"
+        patterns:
+          - "fan*_input"
+          - "pwm[0-9]"
+        use_regex: false
+        file_type: file
+      loop: "{{ pve_base_hwmon_for_fans.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: pve_base_fan_files_raw
+      changed_when: false
+      check_mode: false
 
-- name: List fan and PWM files per hwmon device
-  ansible.builtin.find:
-    paths: "{{ item.path }}"
-    patterns:
-      - "fan*_input"
-      - "pwm[0-9]"
-    use_regex: false
-    file_type: file
-  loop: "{{ pve_base_hwmon_for_fans.files }}"
-  loop_control:
-    label: "{{ item.path }}"
-  register: pve_base_fan_files_raw
-  changed_when: false
-  check_mode: false
+    - name: Read each fan input and PWM value
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: >-
+        {{ pve_base_fan_files_raw.results
+           | map(attribute='files') | flatten }}
+      loop_control:
+        label: "{{ item.path }}"
+      register: pve_base_fan_values
+      changed_when: false
+      check_mode: false
+      failed_when: false
 
-- name: Read each fan input and PWM value
-  ansible.builtin.slurp:
-    src: "{{ item.path }}"
-  loop: >-
-    {{ pve_base_fan_files_raw.results
-       | map(attribute='files') | flatten }}
-  loop_control:
-    label: "{{ item.path }}"
-  register: pve_base_fan_values
-  changed_when: false
-  check_mode: false
-  failed_when: false
+    - name: Report detected fans
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.path }}: {{ item.content | b64decode | trim }}
+          {{ 'RPM' if 'fan' in item.item.path else '(PWM 0-255)' }}
+      loop: "{{ pve_base_fan_values.results }}"
+      loop_control:
+        label: "{{ item.item.path | default('n/a') }}"
+      when: item.content is defined
 
-- name: Report detected fans
-  ansible.builtin.debug:
-    msg: >-
-      {{ item.item.path }}: {{ item.content | b64decode | trim }}
-      {{ 'RPM' if 'fan' in item.item.path else '(PWM 0-255)' }}
-  loop: "{{ pve_base_fan_values.results }}"
-  loop_control:
-    label: "{{ item.item.path | default('n/a') }}"
-  when: item.content is defined
-
-- name: Warn when no fans were found
-  ansible.builtin.debug:
-    msg: >-
-      No fan*_input files found under /sys/class/hwmon. Either this hardware
-      reports fans through a different interface (check `sensors` output from
-      the sensors task), or no fan driver has loaded.
-  when: (pve_base_fan_files_raw.results | map(attribute='files') | flatten | length) == 0
+    - name: Warn when no fans were found
+      ansible.builtin.debug:
+        msg: >-
+          No fan*_input files found under /sys/class/hwmon. Either this
+          hardware reports fans through a different interface (check
+          `sensors` output from the sensors task), or no fan driver has
+          loaded.
+      when: (pve_base_fan_files_raw.results | map(attribute='files') | flatten | length) == 0
