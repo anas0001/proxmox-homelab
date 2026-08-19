@@ -21,6 +21,16 @@
   block:
     # ── Step 1: build the new path ──────────────────────────────────────
 
+    # Not assumed present. Confirmed absent on this host: Proxmox's base
+    # install does not pull in `sudo`, so neither the `sudo` command nor
+    # `visudo` exist until it is installed explicitly — the sudo GROUP
+    # (gid 27) is a reserved base-system group and exists either way, which
+    # is a different thing and easy to mistake for "sudo is already there".
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
     - name: Ensure the ssh-users group exists
       ansible.builtin.group:
         name: "{{ pve_security_ssh_allow_group }}"

@@ -157,6 +157,25 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-20 — `sudo` installed manually to unblock a real `pve_security` run, then codified
+
+`TAGS=ssh make harden` failed on "Grant passwordless sudo to the admin group" with `[Errno 2]
+No such file or directory: b'visudo'`. Proxmox's base install does not pull in the `sudo`
+package — confirmed via `dpkg -l sudo` showing nothing installed. The `sudo` **group** (gid 27)
+is a separate, reserved base-system group that exists regardless, so `svc_admin` had already
+been correctly added to it by the preceding task; only the package providing the `sudo`/`visudo`
+*commands* was missing.
+
+```bash
+apt-get install -y sudo
+```
+
+This is real, permanent state, not a reverted test: `svc_admin` genuinely needs the `sudo`
+command to be useful. `roles/pve_security/tasks/ssh.yml` now installs it explicitly as its own
+task before granting the sudoers rule, so a rebuilt host converges to the same state without
+this manual step. Recorded here because it was applied by hand before the role was fixed to
+cover it, not because it remains a gap.
+
 ### 2026-08-18 — auditd rules test-loaded (`auditctl -R`) during pve_security recon
 
 Before writing `pve_security`'s audit rules, an initial draft using the older `-w`/`-p` watch
