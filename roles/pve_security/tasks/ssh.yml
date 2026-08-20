@@ -130,4 +130,41 @@
         group: root
         mode: "0600"
         validate: "sshd -t -f %s"
+      register: pve_security_sshd_conf
       notify: Reload sshd
+
+    # Flushed here rather than left to the natural end of the play. Handlers
+    # only run once, at end-of-play, by default — under a scoped `--tags`
+    # run, or if a later task in a longer play errors first, the notified
+    # reload can end up never actually firing even though the file on disk
+    # is correct. This was observed for real: a completed `--tags ssh` run
+    # left the correct config on disk while the live sshd process kept
+    # running under its previous config from days earlier, so root logins
+    # kept succeeding despite `sshd -T` (which re-reads config fresh, unlike
+    # the running daemon) reporting `permitrootlogin no`. Flushing
+    # immediately, and then verifying the reload's actual effect below
+    # rather than trusting that it happened, closes that gap.
+    - name: Apply the sshd configuration now, so it can be verified
+      ansible.builtin.meta: flush_handlers
+
+    # The only verification that actually matters: a real connection attempt
+    # as root, from the control node, against the LIVE daemon — not a
+    # `sshd -T` read (which re-parses the files fresh regardless of whether
+    # the running process has reloaded) and not a systemd timestamp (which
+    # does not reliably change on a SIGHUP-based reload either). Only runs
+    # when the config was actually rendered as new/changed, so a
+    # `--check`/no-op run does not attempt a live connection test.
+    - name: Verify root login is now refused by the live sshd process
+      ansible.builtin.command: >-
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+        -o ConnectTimeout=10 -i {{ pve_security_root_ssh_key_path }}
+        root@{{ ansible_host | default(inventory_hostname) }}
+        echo root-login-should-not-succeed
+      delegate_to: localhost
+      become: false
+      register: pve_security_root_login_check
+      changed_when: false
+      failed_when: pve_security_root_login_check.rc == 0
+      when:
+        - pve_security_sshd_conf is changed
+        - not ansible_check_mode

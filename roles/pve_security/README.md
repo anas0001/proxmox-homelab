@@ -21,6 +21,16 @@ Everything else follows the same instinct:
   reload handler — belt and braces, since a broken `sshd_config.d` file with no way back in is
   the single worst outcome this role could produce. Reload, not restart: the running daemon
   keeps existing sessions (including Ansible's own) while re-reading config for new ones.
+  Handlers are flushed immediately after the render (`meta: flush_handlers`) rather than left
+  to the natural end of the play, and the reload's *effect* is then verified with a real SSH
+  connection attempt as root — not `sshd -T` (which re-parses the config files fresh regardless
+  of whether the running daemon has reloaded) and not a systemd timestamp (unreliable across a
+  SIGHUP-based reload). This exists because it happened for real: a completed `--tags ssh` run
+  left a correct, hardened file on disk while the *running* `sshd` process kept serving its
+  previous config from days earlier — handlers only fire once, at end-of-play by default, and a
+  tag-scoped run changes what "end of play" means. Root logins kept succeeding for hours after
+  the file was written, with `sshd -T` misleadingly reporting `permitrootlogin no` the whole
+  time. See `docs/06-out-of-band.md`.
 - **Firewall**: allow rules (`host.fw`) are written and compiled with the firewall **still
   disabled**; the cluster-wide default-deny policy (`cluster.fw`, `enable: 1`) is templated
   **only after**, as a separate task, so "rules exist" and "policy enforced" are two distinct,

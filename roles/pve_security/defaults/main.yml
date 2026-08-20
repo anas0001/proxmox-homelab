@@ -20,6 +20,15 @@ pve_security_admin_ssh_key: "{{ vault_guest_admin_ssh_pubkey }}"
 # lab keypair, not the personal/GitHub key. Deliberately required rather than
 # silently skipped when unset: see the explicit failure in tasks/ssh.yml.
 pve_security_admin_ssh_key_path: ~/.ssh/id_ed25519_homelab
+# The key Ansible is currently authenticating to the host WITH, before this
+# role touches anything. Only meaningful as a "root should now be refused"
+# probe on the run that actually changes the sshd config from permissive to
+# hardened — which is also the only run this is used on: tasks/ssh.yml gates
+# it behind `sshd_conf is changed`, and once inventory is flipped to
+# ansible_user: svc_admin post-hardening (see tasks/main.yml), the template
+# stops changing on repeat runs, so this variable resolving to svc_admin's
+# key at that point is harmless — the check it feeds simply does not run.
+pve_security_root_ssh_key_path: "{{ ansible_ssh_private_key_file }}"
 pve_security_ssh_allow_group: ssh-users
 
 # ── SSH ──────────────────────────────────────────────────────────────────

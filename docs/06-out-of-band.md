@@ -106,7 +106,9 @@ ssh -i ~/.ssh/id_ed25519_homelab svc_admin@<host>   # must succeed
 ssh root@<host>                                      # must now fail/refuse
 ```
 
-**Status:** `ssh.yml` has run (2026-08-20). Confirm the checks above, then make the edit — see
+**Status:** `ssh.yml` has run and hardening is now confirmed genuinely active — root SSH login
+refused, `svc_admin` working — after a `systemctl reload ssh` was needed by hand to apply it
+(see the Incidents entry below). Confirm the checks above still hold, then make the edit — see
 `roles/pve_security/tasks/main.yml` and the role README for the full rationale.
 
 ---
@@ -204,6 +206,41 @@ access-plane row.
 ---
 
 ## Incidents
+
+### 2026-08-20 — `sshd` never reloaded after `ssh.yml`'s first real run; fixed by hand, then closed in the role
+
+`TAGS=ssh make harden` completed and wrote a correct, fully-hardened
+`/etc/ssh/sshd_config.d/00-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`).
+`sshd -T` correctly reported the new values. **Root SSH logins kept succeeding for hours
+afterward.**
+
+Root cause: the *running* `sshd` process (`ps` showed it started 2026-08-14, six days before the
+file was written) never received the `Reload sshd` handler's SIGHUP. `sshd -T` re-parses config
+files fresh on every invocation regardless of the running daemon's state, so it reported the
+correct target values while the live listener kept enforcing whatever it had loaded at its last
+actual start. Ansible handlers fire once, at the end of the play, by default — under a
+`--tags ssh` scoped run this can behave differently than expected, and the notified reload
+appears not to have fired.
+
+Diagnosed and fixed live, over the existing (still-permissive) root SSH session:
+
+```bash
+systemctl reload ssh
+```
+
+Confirmed via `journalctl -u ssh`: `Received SIGHUP; restarting` / `Server listening on ...`.
+Verified immediately after: three consecutive round-trip tests, root refused
+(`Permission denied (publickey)`) and `svc_admin` succeeding, every time.
+
+**This was then closed in the role, not left as a one-off fix.** `roles/pve_security/tasks/ssh.yml`
+now flushes handlers immediately after rendering the config (rather than at end-of-play) and
+follows with a real SSH connection attempt as root, asserting it is refused — the same
+verify-the-actual-effect pattern `firewall.yml` already used for `pve-firewall status`. See the
+role README for the full detail.
+
+**Net state:** intentional — the host is now correctly hardened, root refused, `svc_admin`
+working. Recorded because the hardening was silently inert for a real, non-trivial window on a
+production apply, not because anything here needs reverting.
 
 ### 2026-08-20 — `sudo` installed manually to unblock a real `pve_security` run, then codified
 
