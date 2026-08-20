@@ -63,7 +63,55 @@ must be done with console access available.
 
 ---
 
-### 3. Tailscale subnet router for the lab network — *pending, not yet run*
+### 3a. TOTP 2FA on `root@pam` — *done, manually, 2026-08-20*
+
+**Why not Ansible.** Enrolling a TOTP device is inherently interactive — scanning a QR code
+with an authenticator app — with no safe unattended equivalent. `pve_security` reports this as
+a required manual step at the end of every run rather than attempting it.
+
+**What was done.** Datacenter → Permissions → Two Factor → Add, for `root@pam` (the only human
+login that exists today; `ansible@pve` is API-token-only and has no interactive session for
+TOTP to protect). Recovery keys saved outside the repo.
+
+**Outstanding, not yet done:** `docs/04-security.md` §1 calls for a dedicated human admin
+account in the `pve` realm for interactive GUI/console use, with `root@pam` reserved for
+emergencies only and 2FA moved to that account. No such account exists yet, and creating one is
+not part of any role built so far.
+
+**Verify:** Datacenter → Permissions → Two Factor lists a TOTP entry for `root@pam`.
+
+---
+
+### 3b. `ansible_user: root` → `svc_admin` in `hosts.yml` — *required after `ssh.yml` runs*
+
+**Why not Ansible.** `pve_security/tasks/ssh.yml` disables `PermitRootLogin` and
+`PasswordAuthentication` once the `svc_admin` login is verified from the control node. The run
+applying that change keeps working afterward — `ControlPersist` holds the already-authenticated
+connection open for the rest of that invocation — but `root` stops being a valid credential for
+every **subsequent, separate** `ansible-playbook` invocation. Ansible cannot safely rewrite the
+inventory it is currently connected with mid-run, so this is a deliberate manual edit rather
+than something the role does to itself.
+
+```bash
+# In the real (gitignored) inventories/homelab/hosts.yml:
+#   ansible_user: root
+# becomes:
+#   ansible_user: svc_admin
+```
+
+**Verify before editing:**
+
+```bash
+ssh -i ~/.ssh/id_ed25519_homelab svc_admin@<host>   # must succeed
+ssh root@<host>                                      # must now fail/refuse
+```
+
+**Status:** `ssh.yml` has run (2026-08-20). Confirm the checks above, then make the edit — see
+`roles/pve_security/tasks/main.yml` and the role README for the full rationale.
+
+---
+
+### 4. Tailscale subnet router for the lab network — *pending, not yet run*
 
 **Why it is needed.** The control node runs on a workstation, not on the Proxmox host, because
 the labs require SSH, VNC and XRDP access to the guests from the desk. Lab guests sit on an
