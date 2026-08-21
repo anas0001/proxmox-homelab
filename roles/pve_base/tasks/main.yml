@@ -2,6 +2,19 @@
 # Base host configuration. Runs before hardening, so it must be safe on a host
 # that is still in its post-install state.
 
+# Deliberately does NOT use ansible_facts (e.g. os_family). Confirmed by
+# minimal reproduction: when a role is invoked from a `roles:` list with no
+# tags of its own, inside a play that only carries a play-level tag, running
+# with `--tags <something-scoped-to-one-task-in-the-role>` makes Ansible skip
+# BOTH the implicit "Gathering Facts" step AND every untagged task in the
+# role — including a task tagged `always`, which does not override this.
+# Reproduced with a two-line throwaway role; not a --check artefact, not
+# specific to localhost. Rather than chase the exact tag combination that
+# avoids it, this check simply never depends on facts being gathered at all.
+#
+# /etc/pve existing and being a directory is already a strong, load-bearing
+# signal on its own: it is Proxmox's cluster filesystem, present on every PVE
+# node and essentially nothing else.
 - name: Probe for the Proxmox cluster filesystem
   ansible.builtin.stat:
     path: /etc/pve
@@ -12,18 +25,14 @@
 - name: Confirm this is a Proxmox VE host
   ansible.builtin.assert:
     that:
-      - ansible_facts['os_family'] == 'Debian'
       - pve_base_etc_pve.stat.exists
       - pve_base_etc_pve.stat.isdir
     fail_msg: >-
-      This role targets a Proxmox VE host. Found os_family
-      {{ ansible_facts['os_family'] }}, and /etc/pve present:
-      {{ pve_base_etc_pve.stat.exists }}. /etc/pve is Proxmox's cluster
-      filesystem and exists on every PVE node; the inventory group `pve` is
-      probably pointing somewhere unexpected.
-    success_msg: >-
-      Proxmox VE on Debian {{ ansible_facts['distribution_major_version'] }}
-      ({{ ansible_facts['distribution_release'] }}) confirmed
+      /etc/pve not found or not a directory. This role targets a Proxmox VE
+      host — /etc/pve is Proxmox's cluster filesystem and exists on every PVE
+      node; the inventory group `pve` is probably pointing somewhere
+      unexpected.
+    success_msg: "Proxmox VE host confirmed (/etc/pve present)"
 
 - name: Include repository management
   ansible.builtin.include_tasks: repos.yml

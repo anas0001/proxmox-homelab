@@ -1,7 +1,7 @@
 ---
 # Proxmox firewall: default-deny inbound, with SSH/web UI allowed only from
 # two independent sources (Tailscale, management LAN) so neither is a single
-# point of failure (teach/01-decisions.md D4).
+# point of failure.
 #
 # Managed as plain files under /etc/pve/firewall/ and /etc/pve/nodes/<node>/,
 # over the same SSH connection every other role in this project uses —
@@ -35,10 +35,30 @@
   block:
     # ── Step 1: the allow rules (host.fw), firewall still off ────────────
 
+    # NOT ansible_facts['hostname']: that depends on gather_facts having run,
+    # which is silently skipped under some --tags-scoped invocations (Ansible
+    # only runs the implicit "Gathering Facts" step when it decides something
+    # in the matched task set needs it, and confirmed empirically that a
+    # `--tags firewall` run skips it entirely here) — ansible_facts is then an
+    # empty/default object and indexing it fails with a confusing
+    # "object of type 'dict' has no attribute 'hostname'" error, not a clear
+    # "facts not gathered" message.
+    #
+    # /etc/pve/local is a symlink Proxmox itself maintains, pointing at
+    # nodes/<nodename> — the authoritative Proxmox node name (not just the OS
+    # hostname, which could in principle differ), with no dependency on
+    # Ansible fact-gathering at all. Confirmed live: `readlink /etc/pve/local`
+    # -> `nodes/pve` on this host.
+    - name: Read the Proxmox node name
+      ansible.builtin.command: basename "$(readlink -f /etc/pve/local)"
+      register: pve_security_node_name
+      changed_when: false
+      check_mode: false
+
     - name: Render the host firewall (allow rules for this host)
       ansible.builtin.template:
         src: host.fw.j2
-        dest: "/etc/pve/nodes/{{ ansible_facts['hostname'] }}/host.fw"
+        dest: "/etc/pve/nodes/{{ pve_security_node_name.stdout }}/host.fw"
         owner: root
         group: www-data
         mode: "0640"

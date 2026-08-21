@@ -70,6 +70,23 @@ Every host-affecting command run during this verification is logged in
 [`docs/06-out-of-band.md`](../../docs/06-out-of-band.md) under Incidents, reverted immediately
 after each check.
 
+## Nothing here depends on `ansible_facts`
+
+`firewall.yml` originally used `ansible_facts['hostname']` to build the `host.fw` path. Under a
+`--tags firewall` run this failed with a confusing `object of type 'dict' has no attribute
+'hostname'` rather than a clear "facts not gathered" error — reproduced down to a two-line
+throwaway role: **when a role is invoked from a `roles:` list with no tag of its own, inside a
+play carrying only a play-level tag, running with `--tags <scoped-to-one-task>` makes Ansible
+skip both the implicit "Gathering Facts" step and every untagged task in the role.** Tagging the
+task `always` does not override this — confirmed by testing that too. `pve_base`'s
+`os_family`-based host-identity check had the identical exposure.
+
+Neither role guesses around the exact tag combination that triggers this. Both were rewritten to
+not depend on gathered facts at all: `firewall.yml` reads the real Proxmox node name straight
+from `/etc/pve/local` (a symlink Proxmox itself maintains — confirmed live,
+`readlink /etc/pve/local` → `nodes/pve`), and `pve_base`'s host check relies solely on `/etc/pve`
+existing as a directory, which is already load-bearing on its own.
+
 ## A gap this role does not close on its own
 
 `inventories/homelab/hosts.yml` (gitignored, real values) sets `ansible_user: root` for the
