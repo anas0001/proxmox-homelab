@@ -47,18 +47,28 @@
     # /etc/pve/local is a symlink Proxmox itself maintains, pointing at
     # nodes/<nodename> — the authoritative Proxmox node name (not just the OS
     # hostname, which could in principle differ), with no dependency on
-    # Ansible fact-gathering at all. Confirmed live: `readlink /etc/pve/local`
-    # -> `nodes/pve` on this host.
+    # Ansible fact-gathering at all.
+    #
+    # ansible.builtin.stat, not command+basename+readlink: command does NOT
+    # go through a shell, so `$(readlink -f ...)` was never actually
+    # expanded — it was passed to `basename` as four literal argv tokens,
+    # which is why the real run produced the destination path
+    # /etc/pve/nodes/local) (the mangled tail of the literal string). Caught
+    # by running it for real, not just eyeballing the command. stat's
+    # lnk_source already returns the fully-resolved absolute path with no
+    # string manipulation needed at all — confirmed live:
+    # lnk_source = /etc/pve/nodes/pve.
     - name: Read the Proxmox node name
-      ansible.builtin.command: basename "$(readlink -f /etc/pve/local)"
-      register: pve_security_node_name
+      ansible.builtin.stat:
+        path: /etc/pve/local
+      register: pve_security_node_link
       changed_when: false
       check_mode: false
 
     - name: Render the host firewall (allow rules for this host)
       ansible.builtin.template:
         src: host.fw.j2
-        dest: "/etc/pve/nodes/{{ pve_security_node_name.stdout }}/host.fw"
+        dest: "{{ pve_security_node_link.stat.lnk_source }}/host.fw"
         owner: root
         group: www-data
         mode: "0640"
