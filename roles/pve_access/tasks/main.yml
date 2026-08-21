@@ -167,6 +167,35 @@
      | list | length) == 0
   changed_when: true
 
+# Granted separately from the pool ACL above rather than expecting
+# propagation from /pool/labs to reach it: /sdn and /pool are both top-level
+# branches of the ACL tree, not parent/child, so a grant on one path never
+# propagates to the other regardless of `propagate`. Confirmed the ACL check
+# actually happens somewhere under /sdn from the real 403 this produced
+# creating a VM's net0 device: "Permission check failed
+# (/sdn/zones/localnetwork/vmbr1, SDN.Use)". `localnetwork` there is not a
+# real zone (`pvesh get /cluster/sdn/zones` returns []) — it is PVE 9's
+# internal identifier for "this bridge has no real SDN zone", used only to
+# hang the ACL check on, and not something to grant against directly. The
+# root /sdn path is granted instead, confirmed as a valid ACL path
+# (`pveum acl modify /sdn ...` succeeds) and covers every bridge/zone
+# beneath it via propagation, without needing to know that internal name.
+- name: Grant the VM role's SDN.Use on the SDN path (covers plain bridges too)
+  ansible.builtin.command: >-
+    {{ pve_access_pveum }} acl modify /sdn
+    --roles {{ pve_access_vm_role | quote }}
+    {{ '--tokens' if item.is_token else '--users' }} {{ item.id | quote }}
+  loop: "{{ pve_access_principals }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: >-
+    (pve_access_acl_raw.stdout | from_json
+     | selectattr('path', 'equalto', '/sdn')
+     | selectattr('roleid', 'equalto', pve_access_vm_role)
+     | selectattr('ugid', 'equalto', item.id)
+     | list | length) == 0
+  changed_when: true
+
 - name: Grant the storage role on each lab storage
   ansible.builtin.command: >-
     {{ pve_access_pveum }} acl modify {{ ('/storage/' ~ item.0) | quote }}

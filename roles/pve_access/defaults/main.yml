@@ -55,6 +55,18 @@ pve_access_vm_privs:
   - VM.Snapshot.Rollback   # reset a lab VM back to `clean`
   - VM.GuestAgent.Audit    # wait for the guest agent after boot
   - Pool.Audit             # read the pool the VMs belong to
+  # Attaching a VM's net0 to ANY bridge — not just an SDN vnet — checks this
+  # privilege. `man pveum`, verbatim: "SDN.Use: access SDN vnets and local
+  # network bridges." The name suggests SDN-only; it is not. Missing this
+  # produced a live 403 creating the first template's VM shell: "Permission
+  # check failed (/sdn/zones/localnetwork/vmbr1, SDN.Use)" — the
+  # `localnetwork` zone in that path does not exist (`pvesh get
+  # /cluster/sdn/zones` returns `[]`) and is not something to chase down; it
+  # is PVE 9's internal identifier for "a plain bridge with no real SDN
+  # zone", used purely as an ACL path to hang this same check on.
+  # VM.Config.Network (above) governs editing the net0 config value itself
+  # and is a distinct, narrower check — both are required together.
+  - SDN.Use
 
 # Storage privileges, granted on /storage/<id> for each entry above.
 pve_access_storage_privs:
@@ -87,5 +99,12 @@ pve_access_storage_privs:
 #   VM.Backup, VM.Migrate, VM.Replicate
 #     Meaningless on a single node with no backup target configured yet.
 #
-#   SDN.*
-#     The lab networks are plain Linux bridges, not SDN vnets.
+#   SDN.Allocate, SDN.Audit
+#     Create/modify/read SDN zones and vnets. Nothing in this project
+#     manages SDN — the lab networks are plain Linux bridges. SDN.Use IS
+#     granted above despite the name: per `man pveum` it also gates
+#     attaching a VM to a plain bridge, not only an SDN vnet, and its
+#     absence produced a live 403 the first time a role tried to create a
+#     VM with a net0 device. SDN.Allocate/SDN.Audit remain excluded because
+#     nothing here ever creates, modifies, or reads SDN configuration
+#     itself.
