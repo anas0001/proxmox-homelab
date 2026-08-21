@@ -87,6 +87,31 @@ from `/etc/pve/local` (a symlink Proxmox itself maintains — confirmed live,
 `readlink /etc/pve/local` → `nodes/pve`), and `pve_base`'s host check relies solely on `/etc/pve`
 existing as a directory, which is already load-bearing on its own.
 
+## `/etc/pve` cannot be written with `ansible.builtin.template`/`copy` directly
+
+`/etc/pve` is **pmxcfs**, a FUSE filesystem backed by a replicated SQLite database, not a real
+disk-backed filesystem (`mount` shows `/dev/fuse on /etc/pve type fuse`). `template`'s and
+`copy`'s atomic-replace machinery tries `os.link()` first when moving a rendered temp file into
+place — a normal optimisation, avoiding a full copy when a hardlink-then-rename will do — and
+pmxcfs does not support hardlinks at all. `os.link()` against it fails with `EPERM`, confirmed
+directly with a Python one-liner over the connection, independent of Ansible. `unsafe_writes:
+true` does not help either: it still routes through a copy-then-preserve-permissions step that
+hits the same error. A plain `cp` (a real copy, no linking) succeeds cleanly.
+
+So `cluster.fw` and `host.fw` are never targeted by `template`/`copy` directly. Each is rendered
+to a normal-filesystem staging path (`/tmp`, where `template`'s atomic-move machinery works
+fine), then copied into `/etc/pve` with `ansible.builtin.command: cp`, only when its checksum
+differs from what is already live — comparing `template`'s own `is changed` against the staging
+path would be wrong, since a stale leftover staging file from an earlier run could report
+unchanged even when the real `/etc/pve` content differs. `owner`/`group`/`mode` are never set on
+anything under `/etc/pve` either: pmxcfs assigns `root:www-data 0640` to every file natively
+regardless of what is requested, confirmed by inspecting a file written with no explicit
+attributes at all.
+
+Verified end-to-end against the real host, not just reasoned about: a full render → stage →
+checksum-compare → copy → re-run cycle correctly reported `changed` on the first apply and
+`changed=False` on an identical second one.
+
 ## A gap this role does not close on its own
 
 `inventories/homelab/hosts.yml` (gitignored, real values) sets `ansible_user: root` for the
