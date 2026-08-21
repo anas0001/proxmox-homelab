@@ -1,2 +1,19 @@
 ---
-# tasks file for vm_template
+# Builds cloud-init golden templates: download the upstream cloud image once,
+# create a minimal VM shell, import the image as its boot disk, attach a
+# cloud-init drive, then flag it as a template. vm_provision clones from the
+# result; nothing here ever runs after the first successful build unless a
+# vm_template_images entry changes.
+#
+# Every step checks real state before acting — the API calls this role makes
+# are read-first, not "try and catch the already-exists error" — so a
+# from-scratch run and a rebuild-nothing-changed run cost the same shape of
+# work, just with different task outcomes.
+
+- name: Build each configured golden template
+  ansible.builtin.include_tasks: build_one.yml
+  loop: "{{ vm_template_build }}"
+  loop_control:
+    loop_var: vm_template_key
+    label: "{{ vm_template_key }}"
+  tags: [template]

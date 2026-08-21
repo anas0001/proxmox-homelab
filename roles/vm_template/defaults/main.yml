@@ -1,2 +1,78 @@
 ---
-# Overridable defaults for vm_template. Every variable here is documented.
+# Builds reusable cloud-init golden templates that vm_provision clones from.
+# Rebuild only when the base image updates — this role is idempotent and
+# skips every step whose result already exists, so re-running it after the
+# first successful build is a fast no-op.
+
+# ── API connection ──────────────────────────────────────────────────────
+# Authenticates as the least-privilege token pve_access created. pve_api_host/
+# _user/_token_id are set per-host in inventories/homelab/hosts.yml
+# specifically for this purpose (community.proxmox.* auth) — not
+# pve_access's own internal pve_access_user/_token_id vars, which are that
+# role's private naming, not a contract other roles should reach into.
+vm_template_api_host: "{{ pve_api_host }}"
+vm_template_api_user: "{{ pve_api_user }}"
+vm_template_api_token_id: "{{ pve_api_token_id }}"
+vm_template_api_token_secret: "{{ vault_pve_api_token_secret }}"
+# The Proxmox node name (not the inventory hostname key) — required by
+# community.proxmox.* modules for node-scoped operations. Set per-host in
+# inventories/homelab/hosts.yml as pve_node_name.
+vm_template_node: "{{ pve_node_name }}"
+# The host's TLS cert is still self-signed pending the manual ACME/internal-CA
+# decision pve_security's "what this role leaves manual" report names. Set to
+# true once a trusted cert is in place; document that change in
+# docs/06-out-of-band.md when it happens.
+vm_template_api_validate_certs: false
+
+# ── Storage ──────────────────────────────────────────────────────────────
+# Confirmed on the real host: `local` (dir) carries content type `import`,
+# which `local:import/<file>` in the disk-import step below depends on;
+# `local-lvm` is the thin pool every VM disk (including template disks)
+# lives on.
+vm_template_iso_storage: local
+vm_template_vm_storage: local-lvm
+
+# ── The pool every template and lab VM belongs to ─────────────────────────
+# Matches pve_access_pool exactly — must, since the API token is scoped to
+# VM operations on this pool alone.
+vm_template_pool: labs
+
+# ── Golden templates ───────────────────────────────────────────────────────
+# vmid is fixed per template rather than auto-assigned: a stable, well-known
+# ID (9000-range, Proxmox convention for templates/never a real lab VM) is
+# what vm_provision's clone step targets, and a fixed ID makes "does the
+# template already exist" a single, cheap lookup instead of a name search.
+vm_template_images:
+  rocky9:
+    vmid: 9000
+    name: tmpl-rocky9
+    image_url: "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2"
+    # Rocky's cloud image publishes a matching CHECKSUM file at the same path
+    # with this suffix; used to verify the download rather than trust an
+    # unauthenticated HTTPS transfer alone.
+    checksum_url: "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2.CHECKSUM"
+    cores: 2
+    memory: 2048
+    disk_gb: 10
+  # ubuntu2404: build on demand — see docs/02-architecture.md; the networking
+  # labs need it, the Linux/storage/HPC labs (Rocky) do not, and every image
+  # kept "just in case" is real thin-pool space this host cannot spare.
+
+# Only build the templates actually listed here. Keeps a from-scratch run
+# scoped to what today's labs need rather than every template ever added to
+# vm_template_images above.
+vm_template_build:
+  - rocky9
+
+# QEMU guest agent must be enabled at template level (agent: enabled=1) for
+# vm_provision's "wait for guest agent" step to have anything to wait for —
+# cloud images do not enable it by default.
+vm_template_machine: q35
+vm_template_bios: seabios
+vm_template_scsihw: virtio-scsi-pci
+
+# The bridge templates attach a NIC to. This role never starts the template
+# itself — it only matters because proxmox_kvm requires some net device at
+# creation. vmbr1 (built by pve_network), not vmbr0, so a template's
+# definition never references the management network even indirectly.
+vm_template_net_bridge: vmbr1

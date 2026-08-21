@@ -1,0 +1,188 @@
+---
+# Builds a single golden template, keyed by vm_template_key into
+# vm_template_images. Included once per entry in vm_template_build.
+
+- name: Set convenience facts for this template
+  ansible.builtin.set_fact:
+    vm_template_spec: "{{ vm_template_images[vm_template_key] }}"
+
+- name: Check whether this template already exists
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ vm_template_api_host }}"
+    api_user: "{{ vm_template_api_user }}"
+    api_token_id: "{{ vm_template_api_token_id }}"
+    api_token_secret: "{{ vm_template_api_token_secret }}"
+    validate_certs: "{{ vm_template_api_validate_certs }}"
+    vmid: "{{ vm_template_spec.vmid }}"
+  register: vm_template_existing_raw
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# proxmox_vm_info returns an empty list, not an error, when no VM with this
+# vmid exists — confirmed directly against the module's source (its own
+# vmid parameter doc, verbatim: "If VM with the specified vmid does not
+# exist in a cluster then resulting list will be empty"), not assumed.
+- name: Note whether the template is already built
+  ansible.builtin.set_fact:
+    vm_template_already_exists: >-
+      {{ (vm_template_existing_raw.proxmox_vms | default([]) | length) > 0 }}
+
+# Everything else in this file's build runs inside one block guarded by
+# `when: not vm_template_already_exists`, rather than `meta: end_task` (not a
+# real meta action — the valid choices are end_host/end_play/end_role/
+# end_batch/etc, none of which mean "skip the rest of this included file
+# only"; confirmed against ansible-doc directly after hitting
+# "invalid meta action requested: end_task" on a real run) and rather than
+# `meta: end_role` (would have been syntactically valid but semantically
+# wrong here: this file runs once per entry in vm_template_build via a loop,
+# so ending the ROLE on the first already-built template would skip building
+# every template listed after it).
+- name: Build this template
+  when: not vm_template_already_exists
+  block:
+    - name: Download the cloud image
+      ansible.builtin.get_url:
+        url: "{{ vm_template_spec.image_url }}"
+        dest: "/var/lib/vz/import/{{ vm_template_spec.name }}.qcow2"
+        checksum: "sha256:{{ vm_template_spec.checksum_url }}"
+        mode: "0644"
+        # Cloud images run 600 MB-1.5 GB and this host's link has shown real
+        # latency/loss earlier in this project — a low default timeout would
+        # abort a genuinely-in-progress download, not just a hung one.
+        timeout: 600
+      register: vm_template_download
+
+    - name: Create the template VM shell
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        node: "{{ vm_template_node }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        name: "{{ vm_template_spec.name }}"
+        pool: "{{ vm_template_pool }}"
+        cores: "{{ vm_template_spec.cores }}"
+        memory: "{{ vm_template_spec.memory }}"
+        machine: "{{ vm_template_machine }}"
+        bios: "{{ vm_template_bios }}"
+        scsihw: "{{ vm_template_scsihw }}"
+        # QEMU guest agent must be requested at creation so vm_provision's
+        # later "wait for guest agent" step has something to wait for —
+        # cloud images do not enable it themselves.
+        agent: "enabled=1"
+        net:
+          net0: "virtio,bridge={{ vm_template_net_bridge }}"
+        serial:
+          serial0: socket
+        state: present
+      register: vm_template_shell
+
+    - name: Import the downloaded image as the boot disk
+      community.proxmox.proxmox_disk:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        disk: scsi0
+        state: present
+        storage: "{{ vm_template_vm_storage }}"
+        import_from: "{{ vm_template_iso_storage }}:import/{{ vm_template_spec.name }}.qcow2"
+
+    # proxmox_disk's `resized` state can only GROW a disk (its own doc: "As
+    # of Proxmox 7.2 you can only increase the disk size"). The image import
+    # above creates scsi0 at the source qcow2's own virtual size — confirmed
+    # against Rocky's current cloud image with `qemu-img info`: exactly
+    # 10 GiB, which equals this role's disk_gb default — so resizing
+    # unconditionally would attempt a same-size or shrink "resize" on every
+    # single run, an edge case the module's docs do not describe the
+    # behaviour of. Checked first instead via the API (not SSH — this role
+    # stays API-only throughout) by reading the disk's current size out of
+    # the VM's own config.
+    - name: Read the imported disk's actual size
+      community.proxmox.proxmox_vm_info:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        config: current
+      register: vm_template_disk_check
+      changed_when: false
+      check_mode: false
+
+    - name: Grow the imported disk to the configured template size, if smaller
+      community.proxmox.proxmox_disk:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        disk: scsi0
+        state: resized
+        size: "{{ vm_template_spec.disk_gb }}G"
+      vars:
+        # scsi0 config looks like "local-lvm:vm-9000-disk-0,size=10G" —
+        # extract the size= field's leading integer (GB, since imports/this
+        # role only ever use whole-GB sizes) for comparison.
+        #
+        # `default([], true)` — NOT the one-argument form — before `first`:
+        # regex_search returns None, not an empty list, when nothing
+        # matches, and Ansible's `default` filter only substitutes on
+        # UNDEFINED by default, not on None/falsy values, so `| first` on a
+        # genuine None blows up with "'NoneType' object is not iterable"
+        # regardless of a later `| default(0)`. Confirmed by triggering the
+        # failure first (empty scsi0 string, one-arg default) and then
+        # confirming the two-arg form fixes it, rather than assuming the
+        # common `default(x) | first` idiom is safe here.
+        vm_template_current_scsi0: >-
+          {{ (vm_template_disk_check.proxmox_vms | first).config.scsi0 | default('') }}
+        vm_template_current_disk_gb: >-
+          {{ (vm_template_current_scsi0 | regex_search('size=([0-9]+)G', '\1')
+              | default([], true) | first | default(0)) | int }}
+      when: vm_template_current_disk_gb < (vm_template_spec.disk_gb | int)
+
+    - name: Attach a cloud-init drive and set boot order
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        node: "{{ vm_template_node }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        ide:
+          ide2: "{{ vm_template_iso_storage }}:cloudinit"
+        boot: "order=scsi0"
+        update: true
+        state: present
+
+    - name: Convert the VM into a template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ vm_template_api_host }}"
+        api_user: "{{ vm_template_api_user }}"
+        api_token_id: "{{ vm_template_api_token_id }}"
+        api_token_secret: "{{ vm_template_api_token_secret }}"
+        validate_certs: "{{ vm_template_api_validate_certs }}"
+        node: "{{ vm_template_node }}"
+        vmid: "{{ vm_template_spec.vmid }}"
+        template: true
+        state: present
+      register: vm_template_result
+
+    - name: Remove the downloaded image now that it is imported
+      ansible.builtin.file:
+        path: "/var/lib/vz/import/{{ vm_template_spec.name }}.qcow2"
+        state: absent
+
+    - name: Report the built template
+      ansible.builtin.debug:
+        msg: >-
+          Built {{ vm_template_spec.name }} (vmid {{ vm_template_spec.vmid }}).
+          vm_provision clones from this template's vmid, not its name.

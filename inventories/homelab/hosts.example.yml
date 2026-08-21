@@ -8,11 +8,15 @@ all:
         pve01:
           ansible_host: 192.168.1.10        # example mgmt IP (RFC1918)
           ansible_user: svc_admin
-          # Proxmox API endpoint used by community.general.proxmox_* modules
+          # Proxmox API endpoint used by community.proxmox.* modules
           pve_api_host: 192.168.1.10
           pve_api_user: ansible@pve
           pve_api_token_id: automation
           # secret comes from Vault -> see group_vars/all/vault.example.yml
+          # The Proxmox node name (`pvecm status` / Datacenter -> node in the
+          # UI), NOT the inventory hostname key above. vm_template/vm_provision
+          # pass this as the `node:` parameter to community.proxmox.* modules.
+          pve_node_name: pve01
     guests:                    # lab VMs (created by vm_provision; listed for guest config)
       children:
         linux_lab:

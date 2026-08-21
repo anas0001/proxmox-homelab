@@ -25,3 +25,20 @@ guest_admin_ssh_key: "{{ vault_guest_admin_ssh_pubkey }}"   # PUBLIC key only
 lab_nat_subnet: "10.10.10.0/24"
 lab_nat_gateway: "10.10.10.1"
 lab_domain: "homelab.local"
+
+# ── Python venv for community.proxmox ────────────────────────────────
+# Defined here (group_vars/all), not inside roles/pve_base/defaults/main.yml,
+# because it must resolve in playbooks/provision_vms.yml too, and that play
+# never invokes the pve_base role — role defaults are only in scope for
+# tasks running inside that role itself. Confirmed the failure mode directly
+# rather than assumed: a play referencing a role-default variable without
+# that role present in the play fails with "'<var>' is undefined", not a
+# silent fallback.
+#
+# pve_base creates the venv (roles/pve_base/tasks/proxmoxer_venv.yml);
+# provision_vms.yml points ansible_python_interpreter at it. Debian 13's own
+# python3-proxmoxer package is 2.2.0, and every community.proxmox module
+# requires 2.3+ unconditionally — confirmed live against this host
+# ("Requires proxmoxer 2.3 or newer; found version 2.2.0"), with no newer
+# candidate in Debian's repos at all.
+pve_base_proxmoxer_venv: /opt/proxmoxer-venv

@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- `vm_template` role: builds cloud-init golden templates from upstream cloud images via
+  `community.proxmox` modules only, never SSH — download (checksum-verified against Rocky's
+  published `.CHECKSUM` file), create a minimal VM shell, import the qcow2 as the boot disk,
+  attach a cloud-init drive, convert to a template. Idempotent: checks whether a VM already
+  exists at the configured `vmid` (confirmed against `community.proxmox.proxmox_vm_info`'s own
+  source — a nonexistent vmid returns an empty list, not an error) and skips the whole build if
+  so. Growing the imported disk to the configured template size is itself conditional on the
+  disk's real current size, read back through the API rather than assumed, since Rocky's current
+  cloud image happens to already equal this role's `disk_gb` default and `proxmox_disk`'s
+  `resized` state can only grow, never shrink.
+- `pve_base`: a dedicated Python venv (`pve_base_proxmoxer_venv`, `python3 -m venv
+  --system-site-packages`) carrying a `proxmoxer` version compatible with `community.proxmox`.
+  Debian 13's own `python3-proxmoxer` package is 2.2.0; every `community.proxmox` module requires
+  2.3+ unconditionally, with no newer candidate in Debian's repos at all — confirmed live against
+  the real host, not assumed from a changelog. `playbooks/provision_vms.yml` points
+  `ansible_python_interpreter` at this venv.
 - Repository scaffold: `ansible.cfg`, `requirements.yml`, `Makefile`, linting
   (`.yamllint`, `.ansible-lint`), `pre-commit` (gitleaks + hooks), GitHub Actions CI
   (lint + secret scan), `LICENSE` (MIT).

@@ -207,6 +207,46 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-21 — `pipx`/`python3-venv` test-installed and removed while diagnosing the `proxmoxer` version gap
+
+`vm_template`'s first real `--check` run against the host failed: `Requires proxmoxer 2.3 or
+newer; found version 2.2.0` — a hard floor in every `community.proxmox` module's shared base
+class, not specific to one module or feature. Debian 13's own repo has no newer candidate
+(`apt-cache policy python3-proxmoxer` shows only `2.2.0-1` available).
+
+While diagnosing the fix, both `pipx` and `python3-venv` were installed to test isolated-venv
+approaches, and `proxmoxer` was installed into two throwaway environments:
+
+```bash
+sudo apt-get install -y pipx
+pipx install --system-site-packages proxmoxer          # rejected: proxmoxer has no CLI
+                                                          # entry point, so pipx refused to
+                                                          # keep the venv at all
+sudo apt-get install -y python3-venv
+python3 -m venv --system-site-packages /tmp/proxmoxer-test-venv
+/tmp/proxmoxer-test-venv/bin/pip install "proxmoxer>=2.3"   # confirmed: 2.3.0, and
+                                                              # --system-site-packages
+                                                              # correctly inherits `requests`
+```
+
+Reverted immediately after confirming the approach:
+
+```bash
+rm -rf /tmp/proxmoxer-test-venv
+pipx uninstall proxmoxer   # no-op — nothing was ever actually installed under pipx
+rm -rf ~/.local/share/pipx
+sudo apt-get purge -y pipx python3-venv
+```
+
+**Net state: `pipx` and `python3-venv` not installed** — the same state as before this
+diagnosis. Confirmed via `which pipx python3-venv` returning nothing after the purge.
+
+**Real fix, codified in `pve_base`:** a plain `python3 -m venv --system-site-packages` (not
+`pipx`, which is for CLI applications with entry points and refuses to manage a pure library
+like `proxmoxer`) at a fixed path, with `pip install "proxmoxer>=2.3"` inside it, and
+`ansible_python_interpreter` pointed at that venv's `python3` for the plays that use
+`community.proxmox.*` modules. See `roles/pve_base/README.md` and `playbooks/provision_vms.yml`.
+
 ### 2026-08-20 — `sshd` never reloaded after `ssh.yml`'s first real run; fixed by hand, then closed in the role
 
 `TAGS=ssh make harden` completed and wrote a correct, fully-hardened

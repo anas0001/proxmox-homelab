@@ -1,0 +1,53 @@
+---
+# A dedicated Python venv carrying a modern `proxmoxer`, for every play that
+# uses community.proxmox.* modules. Debian 13's own python3-proxmoxer
+# package is 2.2.0; every community.proxmox module requires 2.3+
+# unconditionally — confirmed live against this host, not assumed from
+# changelogs: "Requires proxmoxer 2.3 or newer; found version 2.2.0", a
+# check in the collection's own shared base class that runs on every module
+# call. No newer candidate exists in Debian's repos.
+#
+# A plain venv, not pipx: pipx manages CLI applications with entry points
+# and refuses outright to keep a venv for a library with none of its own —
+# tried first, confirmed live ("No apps associated with package
+# proxmoxer... pipx should not be used. Consider using pip"). This role does
+# not install pipx.
+#
+# Everything wrapped in one block tagged `proxmoxer`, for the same reason
+# every other include_tasks'd file in this project is: a tag on the
+# `include_tasks` call in main.yml applies only to that include statement,
+# not to the tasks it pulls in. Missed on the first pass here despite having
+# hit and documented this exact bug repeatedly elsewhere in this project —
+# confirmed the recurrence live before fixing it: `--tags proxmoxer --check`
+# showed the include line and nothing else.
+- name: Proxmoxer venv tasks
+  tags: [proxmoxer]
+  block:
+    - name: Create the proxmoxer venv
+      ansible.builtin.command: >-
+        python3 -m venv --system-site-packages {{ pve_base_proxmoxer_venv }}
+      args:
+        # Confirmed idempotent live: re-running `python3 -m venv` against an
+        # existing venv directory exits 0 and changes nothing observable,
+        # but `creates:` still gives an honest changed/unchanged signal in
+        # Ansible's own output rather than reporting `changed` on every run
+        # regardless.
+        creates: "{{ pve_base_proxmoxer_venv }}/bin/python3"
+
+    - name: Check the venv's installed proxmoxer version
+      ansible.builtin.command: >-
+        {{ pve_base_proxmoxer_venv }}/bin/python3 -c
+        "import proxmoxer; print(proxmoxer.__version__)"
+      register: pve_base_proxmoxer_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install a compatible proxmoxer into the venv
+      ansible.builtin.pip:
+        name: "proxmoxer>=2.3"
+        virtualenv: "{{ pve_base_proxmoxer_venv }}"
+        virtualenv_command: "python3 -m venv --system-site-packages"
+      when: >-
+        pve_base_proxmoxer_version.rc != 0
+        or pve_base_proxmoxer_version.stdout is version('2.3', '<')
