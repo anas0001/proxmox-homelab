@@ -1,0 +1,208 @@
+---
+# Proxmox firewall: default-deny inbound, with SSH/web UI allowed only from
+# two independent sources (Tailscale, management LAN) so neither is a single
+# point of failure.
+#
+# Managed as plain files under /etc/pve/firewall/ and /etc/pve/nodes/<node>/,
+# over the same SSH connection every other role in this project uses —
+# deliberately NOT via the community.proxmox firewall modules, which
+# authenticate through the API token. pve_access scoped that token away from
+# Sys.Audit/Sys.Modify on purpose (verified: a live call against
+# /cluster/firewall/options returns 403 Permission check failed), and
+# widening it just to manage the firewall would undermine that role's whole
+# design. SSH/root already has everything needed and is what every other
+# role in this project already does.
+#
+# Two files, deliberately: cluster.fw carries enable + the default policy
+# (policy_in only exists at cluster level); host.fw carries the actual allow
+# rules for THIS node, because "Rules at host level take precedence over
+# rules at datacenter level" (pve-firewall(8)) — the tightest, most specific
+# rules should win, not the broadest ones.
+#
+# Sequencing (D4 rule 3): the [IPSET management] allow-sources and the host
+# rules that reference them are written FIRST. The cluster-wide enable +
+# default-deny policy is written and applied LAST, and only after the host
+# rules are confirmed present. Applying a default-deny policy before its
+# allow rules exist — even for a few seconds between two file writes — would
+# leave the host briefly unreachable.
+#
+# NEITHER cluster.fw NOR host.fw is written with `ansible.builtin.template`
+# directly. /etc/pve is pmxcfs, a FUSE filesystem backed by a replicated
+# SQLite database (confirmed: `mount` shows `/dev/fuse on /etc/pve type
+# fuse`), not a real disk-backed filesystem. template's atomic replace tries
+# `os.link()` first when moving its rendered temp file into place — a
+# standard optimisation on a normal filesystem, avoiding a full copy when a
+# hardlink-then-rename will do — and pmxcfs does not support hardlinks at
+# all: `os.link()` against it fails with EPERM, confirmed directly in a
+# Python one-liner over this exact connection, independent of Ansible
+# entirely. `unsafe_writes: true` does not help either — it still routes
+# through `shutil.copyfile` plus a permission-preserving step that hits the
+# same EPERM. A direct `os.open`/`os.write` and a plain `cp` (a real copy, no
+# linking) both succeed cleanly against pmxcfs, confirmed the same way.
+#
+# `owner`/`group`/`mode` are never set on anything under /etc/pve: pmxcfs
+# assigns root:www-data 0640 to every file natively regardless of what is
+# requested, confirmed by inspecting a file written with no explicit
+# attributes at all.
+#
+# The pattern used throughout: render with `template` to a normal-filesystem
+# staging path (its own atomic-move machinery works fine there — every other
+# role in this project already relies on it), then compare checksums against
+# the real destination and `cp` into place only when they differ. Comparing
+# `template`'s own `is changed` against the STAGING path would be wrong — a
+# stale leftover staging file from an earlier run could make it report
+# unchanged even when /etc/pve's real content differs — so `changed` here is
+# decided by checksum against the actual /etc/pve file, not by trusting the
+# staging render's own change-detection.
+
+- name: Firewall configuration tasks
+  tags: [firewall]
+  block:
+    # NOT ansible_facts['hostname']: that depends on gather_facts having run,
+    # which is silently skipped under some --tags-scoped invocations (Ansible
+    # only runs the implicit "Gathering Facts" step when it decides something
+    # in the matched task set needs it, and confirmed empirically that a
+    # `--tags firewall` run skips it entirely here) — ansible_facts is then an
+    # empty/default object and indexing it fails with a confusing
+    # "object of type 'dict' has no attribute 'hostname'" error, not a clear
+    # "facts not gathered" message.
+    #
+    # /etc/pve/local is a symlink Proxmox itself maintains, pointing at
+    # nodes/<nodename> — the authoritative Proxmox node name (not just the OS
+    # hostname, which could in principle differ), with no dependency on
+    # Ansible fact-gathering at all.
+    #
+    # ansible.builtin.stat, not command+basename+readlink: command does NOT
+    # go through a shell, so `$(readlink -f ...)` was never actually
+    # expanded — it was passed to `basename` as four literal argv tokens,
+    # which is why an earlier version of this task produced the destination
+    # path /etc/pve/nodes/local) (the mangled tail of the literal string).
+    # stat's lnk_source already returns the fully-resolved absolute path with
+    # no string manipulation needed at all — confirmed live:
+    # lnk_source = /etc/pve/nodes/pve.
+    - name: Read the Proxmox node name
+      ansible.builtin.stat:
+        path: /etc/pve/local
+      register: pve_security_node_link
+      changed_when: false
+      check_mode: false
+
+    # ── Step 1: the allow rules (host.fw), firewall still off ────────────
+
+    - name: Render the host firewall to a staging path
+      ansible.builtin.template:
+        src: host.fw.j2
+        dest: /tmp/pve_security_host.fw.staged
+        mode: "0600"
+      changed_when: false
+      register: pve_security_hostfw_staged
+
+    - name: Check the live host firewall's current checksum
+      ansible.builtin.stat:
+        path: "{{ pve_security_node_link.stat.lnk_source }}/host.fw"
+      register: pve_security_hostfw_live
+      changed_when: false
+      check_mode: false
+
+    - name: Copy the host firewall into place if it differs
+      ansible.builtin.command: >-
+        cp /tmp/pve_security_host.fw.staged
+        {{ pve_security_node_link.stat.lnk_source }}/host.fw
+      when: >-
+        not pve_security_hostfw_live.stat.exists
+        or pve_security_hostfw_live.stat.checksum != pve_security_hostfw_staged.checksum
+      changed_when: true
+      register: pve_security_hostfw
+
+    - name: Render the cluster firewall (management IPSet and rules, firewall left OFF) to a staging path
+      ansible.builtin.template:
+        src: cluster.fw.j2
+        dest: /tmp/pve_security_cluster.fw.staged
+        mode: "0600"
+        # `enable` is deliberately templated to 0 by this same file at this
+        # point in the run — see the template. It is flipped to 1 by the
+        # later "Enable the cluster firewall" task, only after these allow
+        # rules are already on disk.
+      changed_when: false
+      register: pve_security_clusterfw_staged
+
+    - name: Check the live cluster firewall's current checksum
+      ansible.builtin.stat:
+        path: /etc/pve/firewall/cluster.fw
+      register: pve_security_clusterfw_live
+      changed_when: false
+      check_mode: false
+
+    - name: Copy the cluster firewall into place if it differs, firewall still disabled
+      ansible.builtin.command: cp /tmp/pve_security_cluster.fw.staged /etc/pve/firewall/cluster.fw
+      when: >-
+        not pve_security_clusterfw_live.stat.exists
+        or pve_security_clusterfw_live.stat.checksum != pve_security_clusterfw_staged.checksum
+      changed_when: true
+      register: pve_security_clusterfw
+
+    - name: Apply the allow-rule files (firewall still disabled)
+      ansible.builtin.command: pve-firewall compile
+      when: pve_security_hostfw is changed or pve_security_clusterfw is changed
+      changed_when: true
+      register: pve_security_compile_check
+      failed_when: pve_security_compile_check.rc != 0
+
+    # ── Step 2: only now, turn the firewall on ────────────────────────────
+    # Re-renders cluster.fw with `enable: 1`. Two applies of the same
+    # template rather than a runtime toggle inside it keeps "rules exist" and
+    # "policy is enforced" as two separate, individually observable steps in
+    # the run's output — exactly the two steps D4 requires, in that order.
+
+    - name: Render the cluster firewall with default-deny inbound to a staging path
+      ansible.builtin.template:
+        src: cluster.fw.j2
+        dest: /tmp/pve_security_cluster.fw.staged
+        mode: "0600"
+      vars:
+        pve_security_firewall_enabled: true
+      changed_when: false
+      register: pve_security_clusterfw_enabled_staged
+
+    - name: Check the live cluster firewall's checksum again
+      ansible.builtin.stat:
+        path: /etc/pve/firewall/cluster.fw
+      register: pve_security_clusterfw_enabled_live
+      changed_when: false
+      check_mode: false
+
+    - name: Enable the cluster firewall with default-deny inbound
+      ansible.builtin.command: cp /tmp/pve_security_cluster.fw.staged /etc/pve/firewall/cluster.fw
+      when: >-
+        not pve_security_clusterfw_enabled_live.stat.exists
+        or pve_security_clusterfw_enabled_live.stat.checksum != pve_security_clusterfw_enabled_staged.checksum
+      changed_when: true
+      register: pve_security_clusterfw_enabled
+      notify: Restart pve-firewall
+
+    - name: Flush handlers so the firewall reload happens now, and can be verified
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify the firewall is active with the expected default policy
+      ansible.builtin.command: pve-firewall status
+      register: pve_security_fw_status
+      changed_when: false
+      check_mode: false
+
+    - name: Report firewall status
+      ansible.builtin.debug:
+        var: pve_security_fw_status.stdout_lines
+
+    - name: Fail if the firewall did not come up enabled
+      ansible.builtin.assert:
+        # Confirmed real output format on this host: "Status: enabled/running"
+        # or "Status: enabled/running (pending changes)" briefly after a
+        # config change. "Status: disabled/running" is the pre-hardening
+        # baseline.
+        that: "'Status: enabled' in pve_security_fw_status.stdout"
+        fail_msg: >-
+          pve-firewall status does not report enabled after this role
+          rendered cluster.fw with enable: 1. Investigate before assuming the
+          host is protected — do not re-run this role blind. Actual output:
+          {{ pve_security_fw_status.stdout }}
+        success_msg: "Proxmox firewall confirmed active"

@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[DEFAULT]
+bantime = {{ pve_security_fail2ban_bantime }}
+findtime = {{ pve_security_fail2ban_findtime }}
+maxretry = {{ pve_security_fail2ban_maxretry }}
+
+[sshd]
+enabled = true
+# backend left at fail2ban's own `auto` default rather than pinned here:
+# this host has no /var/log/auth.log (no rsyslog), so `auto` resolves to the
+# systemd journal backend. Pinning `backend = systemd` explicitly was
+# considered and rejected — `auto` self-corrects if rsyslog is ever added
+# later; a hardcoded systemd backend would not.
+port = {{ pve_security_ssh_port }}
+
+[proxmox]
+enabled = true
+port = 8006
+filter = proxmox
+logpath = /var/log/pveproxy/access.log

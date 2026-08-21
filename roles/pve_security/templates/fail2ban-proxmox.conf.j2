@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+#
+# Matches pveproxy's access.log 401 responses. Confirmed against a real log
+# line on this host (address redacted; format shown):
+#   ::ffff:203.0.113.42 - - [18/08/2026:23:07:02 +0100] \
+#     "GET /api2/json/cluster/resources HTTP/1.1" 401 -
+# The address is IPv4-mapped IPv6 (::ffff:x.x.x.x) because pveproxy listens
+# dual-stack; fail2ban's <HOST> matches either form. Verified with
+# fail2ban-regex against the real log: see docs/06-out-of-band.md.
+[Definition]
+failregex = ^<HOST> - .* "(GET|POST|PUT|DELETE) .*" 401
+ignoreregex =

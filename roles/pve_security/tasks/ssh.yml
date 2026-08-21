@@ -1,0 +1,170 @@
+---
+# SSH hardening — the sequencing here is safety-critical (teach/01-decisions.md
+# D4). The rule: prove the new access path works before removing the old one.
+#
+# Concretely: create svc_admin and its key, then verify an SSH login as
+# svc_admin actually succeeds, BEFORE any task disables root login or password
+# auth. If step 2 fails, nothing has removed the current (root, password-auth)
+# access — the run simply stops with root still reachable exactly as before.
+#
+# Everything is wrapped in one block tagged `ssh`. Tags on the `include_tasks`
+# call in main.yml apply ONLY to that include statement, not to the tasks it
+# pulls in — include_tasks is a dynamic include, so tag filtering happens
+# before the file is even read, and a `--tags ssh` run would otherwise
+# silently execute nothing from this file at all. Confirmed empirically: an
+# untagged version of this file produced zero child tasks under
+# `--tags ssh --check`, not even shown as skipped. The block-level tag is the
+# standard fix and self-maintaining — a task added later inside the block
+# needs no tag of its own.
+- name: SSH hardening tasks
+  tags: [ssh]
+  block:
+    # ── Step 1: build the new path ──────────────────────────────────────
+
+    # Not assumed present. Confirmed absent on this host: Proxmox's base
+    # install does not pull in `sudo`, so neither the `sudo` command nor
+    # `visudo` exist until it is installed explicitly — the sudo GROUP
+    # (gid 27) is a reserved base-system group and exists either way, which
+    # is a different thing and easy to mistake for "sudo is already there".
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Ensure the ssh-users group exists
+      ansible.builtin.group:
+        name: "{{ pve_security_ssh_allow_group }}"
+        state: present
+
+    - name: Create the admin user
+      ansible.builtin.user:
+        name: "{{ pve_security_admin_user }}"
+        groups: "{{ [pve_security_admin_group, pve_security_ssh_allow_group] }}"
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Check whether the admin user already exists
+      ansible.builtin.command: "id {{ pve_security_admin_user }}"
+      register: pve_security_admin_user_exists
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # authorized_key looks up the user's real home directory to place the
+    # key, which does not exist yet on a first run under --check: the
+    # "Create the admin user" task above is simulated there, not real, so
+    # this task has nothing to look up and the module hard-fails rather than
+    # predicting a result. Skipped under check mode specifically when the
+    # user is not yet real — confirmed live: this task fails under --check
+    # on a first run with "Either user must exist or you must provide full
+    # path to key file in check mode" without this guard.
+    - name: Authorise the admin SSH key
+      ansible.posix.authorized_key:
+        user: "{{ pve_security_admin_user }}"
+        key: "{{ pve_security_admin_ssh_key }}"
+        state: present
+        exclusive: true
+      when: not ansible_check_mode or pve_security_admin_user_exists.rc == 0
+
+    - name: Grant passwordless sudo to the admin group
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ pve_security_admin_group }}-nopasswd"
+        owner: root
+        group: root
+        mode: "0440"
+        # visudo-validated on write: a syntactically broken sudoers.d file is
+        # ignored by sudo with a syslog warning, not a hard failure, so
+        # `validate` is the only thing standing between a typo here and a
+        # user who quietly has no sudo the next time they need it.
+        content: "%{{ pve_security_admin_group }} ALL=(ALL) NOPASSWD:ALL\n"
+        validate: "visudo -cf %s"
+
+    # ── Step 2: prove the new path before touching the old one ───────────
+    # This is the gate. Everything below it assumes root/password access
+    # remains fully intact unless this specific check passes.
+
+    - name: Check the admin private key exists on the control node
+      ansible.builtin.stat:
+        path: "{{ pve_security_admin_ssh_key_path | expanduser }}"
+      delegate_to: localhost
+      become: false
+      register: pve_security_admin_key_stat
+      changed_when: false
+      check_mode: false
+
+    - name: Fail with an explicit message when the admin private key is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ pve_security_admin_ssh_key_path }} was not found on the control
+          node, so the admin login cannot be verified before locking anything
+          down. Generate the keypair (see docs/01-control-node.md), or
+          override pve_security_admin_ssh_key_path. Root/password access is
+          UNCHANGED — this task only stops the run from proceeding blind.
+      when: not pve_security_admin_key_stat.stat.exists
+
+    - name: Verify SSH login as the admin user succeeds
+      ansible.builtin.command: >-
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+        -o ConnectTimeout=10 -i {{ pve_security_admin_ssh_key_path }}
+        {{ pve_security_admin_user }}@{{ ansible_host | default(inventory_hostname) }}
+        echo admin-login-ok
+      delegate_to: localhost
+      become: false
+      register: pve_security_admin_login_check
+      changed_when: false
+      failed_when: >-
+        pve_security_admin_login_check.rc != 0 or
+        'admin-login-ok' not in pve_security_admin_login_check.stdout
+
+    # ── Step 3: only now, close the old path ──────────────────────────────
+    # Everything from here on assumes the check above passed. If it did not,
+    # the play already failed and none of this ran.
+
+    - name: Render the hardened sshd configuration
+      ansible.builtin.template:
+        src: 00-hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-hardening.conf
+        owner: root
+        group: root
+        mode: "0600"
+        validate: "sshd -t -f %s"
+      register: pve_security_sshd_conf
+      notify: Reload sshd
+
+    # Flushed here rather than left to the natural end of the play. Handlers
+    # only run once, at end-of-play, by default — under a scoped `--tags`
+    # run, or if a later task in a longer play errors first, the notified
+    # reload can end up never actually firing even though the file on disk
+    # is correct. This was observed for real: a completed `--tags ssh` run
+    # left the correct config on disk while the live sshd process kept
+    # running under its previous config from days earlier, so root logins
+    # kept succeeding despite `sshd -T` (which re-reads config fresh, unlike
+    # the running daemon) reporting `permitrootlogin no`. Flushing
+    # immediately, and then verifying the reload's actual effect below
+    # rather than trusting that it happened, closes that gap.
+    - name: Apply the sshd configuration now, so it can be verified
+      ansible.builtin.meta: flush_handlers
+
+    # The only verification that actually matters: a real connection attempt
+    # as root, from the control node, against the LIVE daemon — not a
+    # `sshd -T` read (which re-parses the files fresh regardless of whether
+    # the running process has reloaded) and not a systemd timestamp (which
+    # does not reliably change on a SIGHUP-based reload either). Only runs
+    # when the config was actually rendered as new/changed, so a
+    # `--check`/no-op run does not attempt a live connection test.
+    - name: Verify root login is now refused by the live sshd process
+      ansible.builtin.command: >-
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+        -o ConnectTimeout=10 -i {{ pve_security_root_ssh_key_path }}
+        root@{{ ansible_host | default(inventory_hostname) }}
+        echo root-login-should-not-succeed
+      delegate_to: localhost
+      become: false
+      register: pve_security_root_login_check
+      changed_when: false
+      failed_when: pve_security_root_login_check.rc == 0
+      when:
+        - pve_security_sshd_conf is changed
+        - not ansible_check_mode

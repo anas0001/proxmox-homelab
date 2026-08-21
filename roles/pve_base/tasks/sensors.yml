@@ -9,51 +9,58 @@
 # take unattended on a hypervisor over SSH. The kernel already auto-loads the
 # hwmon drivers a `modprobe`-and-detect flow would have found, so this task
 # just reads what the kernel has already exposed under /sys/class/hwmon.
+#
+# Everything wrapped in one block tagged `sensors`. A tag on the
+# `include_tasks` call in main.yml applies only to that include statement,
+# not to the tasks it pulls in — see repos.yml's header comment for how this
+# was confirmed.
+- name: Sensor detection tasks
+  tags: [sensors]
+  block:
+    - name: Discover exposed hardware monitoring devices
+      ansible.builtin.find:
+        paths: /sys/class/hwmon
+        file_type: any
+      register: pve_base_hwmon_dirs
+      changed_when: false
+      check_mode: false
 
-- name: Discover exposed hardware monitoring devices
-  ansible.builtin.find:
-    paths: /sys/class/hwmon
-    file_type: any
-  register: pve_base_hwmon_dirs
-  changed_when: false
-  check_mode: false
+    - name: Read each hwmon device's driver name
+      ansible.builtin.slurp:
+        src: "{{ item.path }}/name"
+      loop: "{{ pve_base_hwmon_dirs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: pve_base_hwmon_names
+      changed_when: false
+      check_mode: false
+      failed_when: false
 
-- name: Read each hwmon device's driver name
-  ansible.builtin.slurp:
-    src: "{{ item.path }}/name"
-  loop: "{{ pve_base_hwmon_dirs.files }}"
-  loop_control:
-    label: "{{ item.path }}"
-  register: pve_base_hwmon_names
-  changed_when: false
-  check_mode: false
-  failed_when: false
+    - name: Read sensor output
+      ansible.builtin.command: sensors
+      register: pve_base_sensors_output
+      changed_when: false
+      check_mode: false
+      failed_when: false
 
-- name: Read sensor output
-  ansible.builtin.command: sensors
-  register: pve_base_sensors_output
-  changed_when: false
-  check_mode: false
-  failed_when: false
+    - name: Report detected hardware monitoring drivers
+      ansible.builtin.debug:
+        msg: >-
+          {{ pve_base_hwmon_names.results
+             | rejectattr('content', 'undefined')
+             | map(attribute='content') | map('b64decode') | map('trim') | list }}
 
-- name: Report detected hardware monitoring drivers
-  ansible.builtin.debug:
-    msg: >-
-      {{ pve_base_hwmon_names.results
-         | rejectattr('content', 'undefined')
-         | map(attribute='content') | map('b64decode') | map('trim') | list }}
+    - name: Report full sensor readout
+      ansible.builtin.debug:
+        var: pve_base_sensors_output.stdout_lines
+      when: pve_base_sensors_output.rc == 0
 
-- name: Report full sensor readout
-  ansible.builtin.debug:
-    var: pve_base_sensors_output.stdout_lines
-  when: pve_base_sensors_output.rc == 0
-
-- name: Warn when no sensors were readable
-  ansible.builtin.debug:
-    msg: >-
-      `sensors` returned nothing usable (rc={{ pve_base_sensors_output.rc }}).
-      lm-sensors is installed but has no driver database entry loaded — this
-      is normal immediately after install. Run `sensors-detect` interactively
-      at the console (not over SSH; see the note above) if drivers were not
-      auto-loaded, then re-run this role.
-  when: pve_base_sensors_output.rc != 0
+    - name: Warn when no sensors were readable
+      ansible.builtin.debug:
+        msg: >-
+          `sensors` returned nothing usable (rc={{ pve_base_sensors_output.rc }}).
+          lm-sensors is installed but has no driver database entry loaded —
+          this is normal immediately after install. Run `sensors-detect`
+          interactively at the console (not over SSH; see the note above) if
+          drivers were not auto-loaded, then re-run this role.
+      when: pve_base_sensors_output.rc != 0

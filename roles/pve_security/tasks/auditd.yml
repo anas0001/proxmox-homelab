@@ -1,0 +1,36 @@
+---
+# auditd baseline: watch the files whose modification is a security event on
+# this host — cluster config, SSH config, and account/privilege databases —
+# plus privileged command execution.
+#
+# Everything wrapped in one block tagged `auditd`, for the same reason
+# ssh.yml's tasks are: a tag on the `include_tasks` call in main.yml applies
+# only to that include statement, not to the tasks it pulls in.
+- name: Auditd configuration tasks
+  tags: [auditd]
+  block:
+    - name: Install auditd
+      ansible.builtin.apt:
+        name: auditd
+        state: present
+
+    # ansible.builtin.template, not copy+content: ansible_managed is injected
+    # only by template's own action plugin, not a general fact, so a copy:
+    # task referencing it always fails with "'ansible_managed' is
+    # undefined" — confirmed live. Same bug already fixed once in
+    # pve_network and recurred here; see fail2ban.yml's identical note.
+    - name: Write the baseline audit rules
+      ansible.builtin.template:
+        src: audit-rules.j2
+        dest: /etc/audit/rules.d/60-pve-security.rules
+        owner: root
+        group: root
+        mode: "0640"
+      register: pve_security_audit_rules
+      notify: Reload auditd rules
+
+    - name: Ensure auditd is enabled and running
+      ansible.builtin.service:
+        name: auditd
+        enabled: true
+        state: started

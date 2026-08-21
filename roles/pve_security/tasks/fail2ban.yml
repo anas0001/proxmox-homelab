@@ -1,0 +1,56 @@
+---
+# fail2ban: jails for sshd and pveproxy (Proxmox's own web UI/API, whose auth
+# failures fail2ban has no filter for out of the box — checked, not assumed:
+# `dpkg -L fail2ban` ships no proxmox/pveproxy filter).
+#
+# backend = auto (fail2ban's own default) rather than a log-file backend.
+# Debian 13 ships no rsyslog and therefore no /var/log/auth.log — confirmed
+# on this host — so sshd auth events exist only in the systemd journal.
+# `auto` correctly detects this and uses the systemd backend; a log-file
+# backend pointed at a path that will never exist would silently never ban
+# anything.
+#
+# Everything wrapped in one block tagged `fail2ban`, for the same reason
+# ssh.yml's tasks are: a tag on the `include_tasks` call in main.yml applies
+# only to that include statement, not to the tasks it pulls in.
+- name: Fail2ban configuration tasks
+  tags: [fail2ban]
+  block:
+    - name: Install fail2ban
+      ansible.builtin.apt:
+        name: fail2ban
+        state: present
+
+    # ansible.builtin.template, not copy+content: `content:` is templated by
+    # Ansible's generic task-argument resolution, so plain variables like
+    # pve_security_fail2ban_bantime would have worked — but `ansible_managed`
+    # specifically is injected only by template's own action plugin, not a
+    # general fact, so a copy: task referencing it always fails with
+    # "'ansible_managed' is undefined". Confirmed live. Same class of bug
+    # already hit and fixed once in pve_network; recurred here because this
+    # file was written before that fix was internalised as a rule rather than
+    # a one-off patch. auditd.yml had the identical latent bug, caught while
+    # checking for other occurrences rather than patching this file alone.
+    - name: Write the pveproxy filter
+      ansible.builtin.template:
+        src: fail2ban-proxmox.conf.j2
+        dest: /etc/fail2ban/filter.d/proxmox.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart fail2ban
+
+    - name: Configure the sshd and proxmox jails
+      ansible.builtin.template:
+        src: fail2ban-jail.conf.j2
+        dest: /etc/fail2ban/jail.d/pve-security.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart fail2ban
+
+    - name: Ensure fail2ban is enabled and running
+      ansible.builtin.service:
+        name: fail2ban
+        enabled: true
+        state: started

@@ -63,7 +63,57 @@ must be done with console access available.
 
 ---
 
-### 3. Tailscale subnet router for the lab network — *pending, not yet run*
+### 3a. TOTP 2FA on `root@pam` — *done, manually, 2026-08-20*
+
+**Why not Ansible.** Enrolling a TOTP device is inherently interactive — scanning a QR code
+with an authenticator app — with no safe unattended equivalent. `pve_security` reports this as
+a required manual step at the end of every run rather than attempting it.
+
+**What was done.** Datacenter → Permissions → Two Factor → Add, for `root@pam` (the only human
+login that exists today; `ansible@pve` is API-token-only and has no interactive session for
+TOTP to protect). Recovery keys saved outside the repo.
+
+**Outstanding, not yet done:** `docs/04-security.md` §1 calls for a dedicated human admin
+account in the `pve` realm for interactive GUI/console use, with `root@pam` reserved for
+emergencies only and 2FA moved to that account. No such account exists yet, and creating one is
+not part of any role built so far.
+
+**Verify:** Datacenter → Permissions → Two Factor lists a TOTP entry for `root@pam`.
+
+---
+
+### 3b. `ansible_user: root` → `svc_admin` in `hosts.yml` — *required after `ssh.yml` runs*
+
+**Why not Ansible.** `pve_security/tasks/ssh.yml` disables `PermitRootLogin` and
+`PasswordAuthentication` once the `svc_admin` login is verified from the control node. The run
+applying that change keeps working afterward — `ControlPersist` holds the already-authenticated
+connection open for the rest of that invocation — but `root` stops being a valid credential for
+every **subsequent, separate** `ansible-playbook` invocation. Ansible cannot safely rewrite the
+inventory it is currently connected with mid-run, so this is a deliberate manual edit rather
+than something the role does to itself.
+
+```bash
+# In the real (gitignored) inventories/homelab/hosts.yml:
+#   ansible_user: root
+# becomes:
+#   ansible_user: svc_admin
+```
+
+**Verify before editing:**
+
+```bash
+ssh -i ~/.ssh/id_ed25519_homelab svc_admin@<host>   # must succeed
+ssh root@<host>                                      # must now fail/refuse
+```
+
+**Status:** `ssh.yml` has run and hardening is now confirmed genuinely active — root SSH login
+refused, `svc_admin` working — after a `systemctl reload ssh` was needed by hand to apply it
+(see the Incidents entry below). Confirm the checks above still hold, then make the edit — see
+`roles/pve_security/tasks/main.yml` and the role README for the full rationale.
+
+---
+
+### 4. Tailscale subnet router for the lab network — *pending, not yet run*
 
 **Why it is needed.** The control node runs on a workstation, not on the Proxmox host, because
 the labs require SSH, VNC and XRDP access to the guests from the desk. Lab guests sit on an
@@ -156,6 +206,132 @@ access-plane row.
 ---
 
 ## Incidents
+
+### 2026-08-20 — `sshd` never reloaded after `ssh.yml`'s first real run; fixed by hand, then closed in the role
+
+`TAGS=ssh make harden` completed and wrote a correct, fully-hardened
+`/etc/ssh/sshd_config.d/00-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`).
+`sshd -T` correctly reported the new values. **Root SSH logins kept succeeding for hours
+afterward.**
+
+Root cause: the *running* `sshd` process (`ps` showed it started 2026-08-14, six days before the
+file was written) never received the `Reload sshd` handler's SIGHUP. `sshd -T` re-parses config
+files fresh on every invocation regardless of the running daemon's state, so it reported the
+correct target values while the live listener kept enforcing whatever it had loaded at its last
+actual start. Ansible handlers fire once, at the end of the play, by default — under a
+`--tags ssh` scoped run this can behave differently than expected, and the notified reload
+appears not to have fired.
+
+Diagnosed and fixed live, over the existing (still-permissive) root SSH session:
+
+```bash
+systemctl reload ssh
+```
+
+Confirmed via `journalctl -u ssh`: `Received SIGHUP; restarting` / `Server listening on ...`.
+Verified immediately after: three consecutive round-trip tests, root refused
+(`Permission denied (publickey)`) and `svc_admin` succeeding, every time.
+
+**This was then closed in the role, not left as a one-off fix.** `roles/pve_security/tasks/ssh.yml`
+now flushes handlers immediately after rendering the config (rather than at end-of-play) and
+follows with a real SSH connection attempt as root, asserting it is refused — the same
+verify-the-actual-effect pattern `firewall.yml` already used for `pve-firewall status`. See the
+role README for the full detail.
+
+**Net state:** intentional — the host is now correctly hardened, root refused, `svc_admin`
+working. Recorded because the hardening was silently inert for a real, non-trivial window on a
+production apply, not because anything here needs reverting.
+
+### 2026-08-20 — `sudo` installed manually to unblock a real `pve_security` run, then codified
+
+`TAGS=ssh make harden` failed on "Grant passwordless sudo to the admin group" with `[Errno 2]
+No such file or directory: b'visudo'`. Proxmox's base install does not pull in the `sudo`
+package — confirmed via `dpkg -l sudo` showing nothing installed. The `sudo` **group** (gid 27)
+is a separate, reserved base-system group that exists regardless, so `svc_admin` had already
+been correctly added to it by the preceding task; only the package providing the `sudo`/`visudo`
+*commands* was missing.
+
+```bash
+apt-get install -y sudo
+```
+
+This is real, permanent state, not a reverted test: `svc_admin` genuinely needs the `sudo`
+command to be useful. `roles/pve_security/tasks/ssh.yml` now installs it explicitly as its own
+task before granting the sudoers rule, so a rebuilt host converges to the same state without
+this manual step. Recorded here because it was applied by hand before the role was fixed to
+cover it, not because it remains a gap.
+
+### 2026-08-18 — auditd rules test-loaded (`auditctl -R`) during pve_security recon
+
+Before writing `pve_security`'s audit rules, an initial draft using the older `-w`/`-p` watch
+syntax was loaded with `auditctl -R` to confirm it was accepted — it was, but with the warning
+"Old style watch rules are slower". `audit.rules(7)` confirms `-w` is deprecated in favour of
+syscall-rule form (`-F path=... -F perm=...`). The rules were rewritten in the modern form and
+reloaded to confirm they load without the warning and expand to the expected syscall set
+(`auditctl -l` after loading showed the full expanded `-S open,bind,truncate,...` list per
+rule). `auditd` was installed for this test and purged afterward:
+
+```bash
+apt-get install -y auditd
+auditctl -R /tmp/test-rules   # loaded and inspected twice, once per syntax form
+auditctl -D                   # clear loaded rules
+systemctl stop auditd
+systemctl disable auditd
+apt-get purge -y auditd
+```
+
+**Net state:** auditd not installed, no rules loaded — the same state as before recon. Confirmed
+via `dpkg -l auditd` showing no `ii`/`rc` entry after the purge.
+
+### 2026-08-18 — cluster firewall briefly enabled to confirm `pve-firewall status` output format
+
+Before writing `pve_security`'s assertion that the firewall came up enabled after being
+configured, the real output of `pve-firewall status` needed confirming rather than guessed —
+the Proxmox man page does not document the exact string. The following was run:
+
+```bash
+cat > /etc/pve/firewall/cluster.fw <<EOF
+[OPTIONS]
+enable: 1
+policy_in: ACCEPT
+EOF
+```
+
+`policy_in: ACCEPT` was used deliberately — this briefly enabled the firewall daemon with a
+permissive default policy, not a default-deny one, so no inbound traffic was actually blocked
+during the test. Confirmed `Status: enabled/running (pending changes)`, then reverted
+immediately:
+
+```bash
+rm -f /etc/pve/firewall/cluster.fw
+```
+
+Confirmed back to `Status: disabled/running` afterward — the pre-hardening baseline. **Net
+state: firewall disabled, same as before the test**, and at no point was inbound traffic
+actually restricted.
+
+### 2026-08-18 — fail2ban test-installed and purged twice during pve_security recon
+
+Before writing the `pve_security` fail2ban tasks, the package was installed to check whether it
+ships a `pveproxy` filter by default (it does not — one had to be written) and to confirm the
+`backend = auto` default correctly targets journald on a host with no `/var/log/auth.log`
+(Debian 13 ships no `rsyslog` by default; confirmed absent). Installed and purged once for that
+recon, then installed a second time to run `fail2ban-regex` against the real
+`/var/log/pveproxy/access.log` and confirm the hand-written `proxmox` filter actually matches
+real 401 lines (it matched 12 of 12157 real log lines) rather than trusting the regex
+unverified. Both times:
+
+```bash
+apt-get install -y --no-install-recommends fail2ban
+# ... verification ...
+systemctl stop fail2ban
+systemctl disable fail2ban
+apt-get purge -y fail2ban
+rm -f /etc/fail2ban/filter.d/proxmox.conf
+```
+
+**Net state:** fail2ban not installed — the same state as before recon. Confirmed via
+`dpkg -l fail2ban` showing no `ii`/`rc` entry after each purge.
 
 ### 2026-08-XX — dnsmasq left running wildcard-bound during pve_network development
 

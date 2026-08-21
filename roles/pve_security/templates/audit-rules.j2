@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+#
+# `-F path=... -F perm=...` syntax throughout, not the older `-w`/`-p` watch
+# form: auditctl on this host reports "Old style watch rules are slower",
+# and audit.rules(7) confirms -w is deprecated in favour of this
+# syscall-rule form, which additionally requires (and gets) an explicit
+# arch for better performance.
+
+# /etc/pve is Proxmox's cluster filesystem: VM configs, firewall rules,
+# user/ACL definitions. A write here is a Proxmox-config-changing event
+# regardless of whether it went through the API, pveum, or a direct edit.
+-a always,exit -F arch=b64 -F path=/etc/pve -F perm=wa -k pve_config
+
+-a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config -F perm=wa -k sshd_config
+-a always,exit -F arch=b64 -F path=/etc/ssh/sshd_config.d -F perm=wa -k sshd_config
+
+-a always,exit -F arch=b64 -F path=/etc/sudoers -F perm=wa -k sudoers
+-a always,exit -F arch=b64 -F path=/etc/sudoers.d -F perm=wa -k sudoers
+
+-a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity
+-a always,exit -F arch=b64 -F path=/etc/shadow -F perm=wa -k identity
+-a always,exit -F arch=b64 -F path=/etc/group -F perm=wa -k identity
+-a always,exit -F arch=b64 -F path=/etc/gshadow -F perm=wa -k identity
+
+# Privileged execution: any exec by uid 0 after the boot-time auid is set
+# (auid!=4294967295 excludes kernel/init processes that have no login
+# session, which would otherwise flood this rule at every boot).
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid!=4294967295 -k priv_exec

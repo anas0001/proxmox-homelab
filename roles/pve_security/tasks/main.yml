@@ -1,2 +1,68 @@
 ---
-# tasks file for pve_security
+# Security hardening for the Proxmox host. See docs/04-security.md for the
+# target state and teach/01-decisions.md D4 for why this role is sequenced
+# the way it is.
+#
+# ONE-TIME MANUAL STEP AFTER THIS ROLE'S FIRST SUCCESSFUL RUN:
+#   inventories/homelab/hosts.yml sets `ansible_user: root` for the pve group.
+#   Once PermitRootLogin is disabled, that stops being a valid credential for
+#   every FUTURE Ansible connection to this host — the current run keeps
+#   working (ControlPersist keeps the already-authenticated connection alive
+#   for the rest of this invocation), but the next `ansible-playbook` command,
+#   run separately, will try root and be refused. Change `ansible_user: root`
+#   to `ansible_user: svc_admin` in the real (gitignored) hosts.yml once this
+#   role has run and been verified. This is deliberately a manual edit, not
+#   something this role does to its own inventory mid-run.
+
+- name: Include SSH hardening
+  ansible.builtin.include_tasks: ssh.yml
+  tags: [ssh]
+
+- name: Include firewall configuration
+  ansible.builtin.include_tasks: firewall.yml
+  tags: [firewall]
+
+- name: Include fail2ban
+  ansible.builtin.include_tasks: fail2ban.yml
+  when: pve_security_enable_fail2ban
+  tags: [fail2ban]
+
+- name: Include auditd
+  ansible.builtin.include_tasks: auditd.yml
+  when: pve_security_enable_auditd
+  tags: [auditd]
+
+- name: Apply the security sysctl baseline
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/62-pve-security.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  loop: "{{ pve_security_sysctl }}"
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+  tags: [sysctl]
+
+- name: Report what this role deliberately leaves manual
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop:
+    - >-
+      TOTP 2FA (docs/04-security.md §1) is not automated: enrolling a TOTP
+      device is inherently interactive (scanning a QR code with an
+      authenticator app), with no safe unattended equivalent. Enable
+      manually: Datacenter -> Permissions -> Two Factor -> Add.
+    - >-
+      TLS (docs/04-security.md §5) is not automated: ACME needs either a
+      publicly resolvable DNS-01 provider or exposing HTTP-01, and an
+      internal CA needs a decision this role cannot make for you about how
+      your workstation should come to trust it. The self-signed Proxmox CA
+      cert remains in place until that decision is made and documented.
+    - >-
+      Backups (docs/04-security.md §7) are not automated: a vzdump schedule
+      needs a real backup target (external disk, NFS, PBS) that does not
+      exist yet. Document the target and the 3-2-1 intent in
+      docs/05-runbook.md once one is chosen, then codify the schedule here.
+  tags: [always]
