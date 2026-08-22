@@ -1,11 +1,25 @@
 ---
 # Build golden templates (once) and clone lab VMs from them.
 # Guarded: never targets the host's own disks; VM state is driven by inventory.
+#
+# Depends on pve_bootstrap.yml (pve_base) having already run at least once:
+# every community.proxmox.* module in vm_template/vm_provision needs a
+# proxmoxer >= 2.3, which Debian 13's own package does not provide (2.2.0,
+# no newer candidate). pve_base creates a venv with a compatible version;
+# ansible_python_interpreter here points AT that venv rather than each role
+# managing its own. If pve_bootstrap.yml has never run, this play's own
+# tasks still execute under the system interpreter and every
+# community.proxmox.* call fails with "Requires proxmoxer 2.3 or newer" —
+# a clear, correctly-attributable error, not a silent misconfiguration.
 - name: Build templates and provision lab VMs
   hosts: pve
   become: true
   gather_facts: true
   tags: [provision]
+  vars:
+    ansible_python_interpreter: "{{ pve_base_proxmoxer_venv }}/bin/python3"
   roles:
     - role: vm_template      # download cloud image + build cloud-init template(s)
+      tags: [template]
     - role: vm_provision     # clone -> configure -> boot -> snapshot 'clean'
+      tags: [provision-vms]

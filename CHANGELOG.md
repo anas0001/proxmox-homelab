@@ -7,6 +7,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- `vm_template` role: builds cloud-init golden templates from upstream cloud images via
+  `community.proxmox` modules only, never SSH — download (checksum-verified against Rocky's
+  published `.CHECKSUM` file), create a minimal VM shell, import the qcow2 as the boot disk,
+  attach a cloud-init drive, convert to a template. Idempotent: checks whether a VM already
+  exists at the configured `vmid` (confirmed against `community.proxmox.proxmox_vm_info`'s own
+  source — a nonexistent vmid returns an empty list, not an error) and skips the whole build if
+  so. A VM existing at the vmid is checked separately from a VM being an actual finished
+  template (`template: true`, confirmed via the module's own `proxmox_to_ansible_bool()`
+  conversion) — a real gap hit live, when an interrupted build left a non-template VM sitting at
+  the vmid; the role now fails loudly with an actionable message instead of silently treating a
+  half-built VM as done or blindly recreating it. Growing the imported disk to the configured
+  template size is itself conditional on the disk's real current size, read back through the API
+  rather than assumed, since Rocky's current cloud image happens to already equal this role's
+  `disk_gb` default and `proxmox_disk`'s `resized` state can only grow, never shrink. Two of
+  `proxmox_kvm`'s own safety defaults required explicit opt-outs, both found live against the
+  real host, not from docs alone: attaching the cloud-init drive needs `update_unsafe: true`
+  (plain `update: true` silently disables ide/net/virtio/sata/scsi updates as a data-loss guard,
+  which this task's `ide2` write falls under) and converting to a template needs `update: true`
+  on its own (without it, `state: present` against an existing VM reports unchanged success and
+  applies nothing — caught only by checking `qm config` on the host directly, not by trusting the
+  task's own report).
+- `pve_base`: a dedicated Python venv (`pve_base_proxmoxer_venv`, `python3 -m venv
+  --system-site-packages`) carrying a `proxmoxer` version compatible with `community.proxmox`.
+  Debian 13's own `python3-proxmoxer` package is 2.2.0; every `community.proxmox` module requires
+  2.3+ unconditionally, with no newer candidate in Debian's repos at all — confirmed live against
+  the real host, not assumed from a changelog. `playbooks/provision_vms.yml` points
+  `ansible_python_interpreter` at this venv.
 - Repository scaffold: `ansible.cfg`, `requirements.yml`, `Makefile`, linting
   (`.yamllint`, `.ansible-lint`), `pre-commit` (gitleaks + hooks), GitHub Actions CI
   (lint + secret scan), `LICENSE` (MIT).
@@ -24,7 +51,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `ansible@pve` user, and an API token with privilege separation enabled. Bootstraps
   over SSH with `pveum` rather than the API modules, which breaks the circular
   dependency (the modules need the credential this role creates) and avoids storing
-  the Proxmox root password anywhere.
+  the Proxmox root password anywhere. `AnsibleLabVM` also grants `SDN.Use` on the
+  separate `/sdn` ACL path (not merely on `/pool/labs` — the two are unrelated
+  top-level branches of the ACL tree) — despite the name, `man pveum` confirms this
+  privilege also gates attaching a VM's network device to a plain Linux bridge, not
+  only an SDN vnet. Its absence produced a live 403 the first time `vm_template`
+  tried to create a VM with a `net0` device.
 - `docs/control-node.md`: complete control-node setup — virtualenv and tooling versions,
   dedicated SSH key, inventory and vault, the first run, and linting the repository with no
   host at all. Also covers running from WSL2 (Tailscale MagicDNS is not inherited) and how to

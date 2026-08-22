@@ -70,6 +70,10 @@
   ansible.builtin.include_tasks: fans.yml
   tags: [sensors, fans]
 
+- name: Include the proxmoxer venv
+  ansible.builtin.include_tasks: proxmoxer_venv.yml
+  tags: [proxmoxer]
+
 - name: Apply the sysctl baseline
   ansible.posix.sysctl:
     name: "{{ item.name }}"

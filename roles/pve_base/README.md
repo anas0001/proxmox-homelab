@@ -26,6 +26,32 @@ safe on a host still in its post-install state.
 - **sysctl baseline.** File descriptors, ARP table sizing for many bridged guests, and reduced
   swappiness. Security-focused sysctl hardening belongs to `pve_security`; these are correctness
   and capacity settings only.
+- **A Python venv for `community.proxmox`.** See below — needed by `vm_template`/`vm_provision`,
+  not this role's own tasks, but built here since it is host baseline.
+
+## The `community.proxmox` venv
+
+Debian 13's `python3-proxmoxer` package is 2.2.0. Every `community.proxmox` module requires
+2.3+ **unconditionally** — a check in the collection's shared base class that runs on every
+module call, not gated behind any particular feature — confirmed live against the real host
+(`Requires proxmoxer 2.3 or newer; found version 2.2.0`), not assumed from a changelog. No newer
+candidate exists in Debian's own repositories at all.
+
+The fix is a plain `python3 -m venv --system-site-packages` at a fixed path
+(`pve_base_proxmoxer_venv`), with a compatible `proxmoxer` installed into it via
+`ansible.builtin.pip`. **Not `pipx`**: tried first, and `pipx` manages CLI applications with
+entry points — it refuses outright to keep a venv for a library with none of its own
+(confirmed live: *"No apps associated with package proxmoxer... pipx should not be used"*).
+`--system-site-packages` so the venv still sees system-installed libraries the Ansible modules
+also need (`requests` etc.) rather than duplicating the whole Python environment for one
+package.
+
+`pve_base_proxmoxer_venv` is a `group_vars/all/main.yml` variable, not a role default in this
+role, deliberately: `playbooks/provision_vms.yml` needs to read the same path to set
+`ansible_python_interpreter`, and that play never invokes `pve_base` — a role's own defaults
+only resolve for tasks running inside that role, confirmed directly (a play referencing a
+role-default variable without the role present fails with `'<var>' is undefined`) rather than
+assumed to "just work" globally.
 
 ## The thin-pool guard
 
@@ -73,7 +99,8 @@ a vendor file is a poor trade for removing one harmless dialog.
 
 ## Tags
 
-`bootstrap`, plus `repos`, `packages`, `time`, `storage`, `guard`, `kvm`, `sysctl` for scoping.
+`bootstrap`, plus `repos`, `packages`, `time`, `storage`, `guard`, `kvm`, `sensors`, `fans`,
+`proxmoxer`, `sysctl` for scoping.
 
 ## Variables
 

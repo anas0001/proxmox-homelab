@@ -207,6 +207,104 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-22 — VM 9000 destroyed a second time after an SSH timeout mid-build, then rebuilt successfully
+
+After the `ide2`/`update_unsafe` and template-conversion (`update: true`) fixes below were both
+in place, a full clean rebuild of `tmpl-rocky9` was re-run in the background (no artificial
+timeout wrapper, after an earlier attempt was killed by one of my own 300s wrappers that was too
+short for this session's slow/unstable link mid-download). The VM shell and disk-import steps
+both succeeded (`changed: true`), but the next task — a pure API read
+(`community.proxmox.proxmox_vm_info`) — failed with `Timeout (12s) waiting for privilege
+escalation prompt`, marking the host `UNREACHABLE`. `provision_vms.yml` sets `become: true` at
+the play level for every task in the role, including ones that only need the API token, not
+root; this one hit a real `sudo` prompt that never got answered in time, most likely a transient
+blip on the same link that made the earlier download take 618s. `ansible ... -m ping` succeeded
+immediately afterward, confirming the host was reachable again and this was not a persistent
+break.
+
+This left VM 9000 partially built again (shell + 10G disk imported, no cloud-init drive, no
+template flag) — a different root cause than the previous incident, but the same resulting
+state. The idempotence guard added after the first incident was confirmed working a second time,
+against this new cause, before anything was touched: re-running `vm_template` unmodified failed
+loudly with the same actionable message rather than silently skipping or recreating.
+
+```bash
+qm destroy 9000
+```
+
+**Net state:** vmid 9000 freed, its LVM disk removed, confirmed via `qm list` showing nothing —
+the same reset pattern as the first incident, and again a deliberate choice of full rebuild over
+the cheaper `qm template 9000` shortcut.
+
+**Outcome:** the subsequent clean rebuild completed successfully end-to-end. Confirmed directly
+on the host, not from Ansible's own report alone: `qm config 9000` shows `ide2:
+local:9000/vm-9000-cloudinit.qcow2,media=cdrom`, `boot: order=scsi0`, and `template: 1`. The
+`vm_template` role is now confirmed working against the real host from a clean state.
+
+### 2026-08-21 — VM 9000 destroyed manually after a partial `vm_template` build
+
+`vm_template`'s "Attach a cloud-init drive" task failed live with `Unable to update vm None
+with vmid 9000: 'ide2'` — `proxmox_kvm`'s `update: true` deliberately disables updates to
+`ide`/`net`/`virtio`/`sata`/`scsi` as a safety feature (confirmed in the module's own docs);
+the fix is `update_unsafe: true`, scoped narrowly since this call only ever sets a new `ide2`
+cloud-init drive and never touches `scsi0` in the same call. This left VM 9000 in a real
+partial state: shell created, disk imported (confirmed exactly 10G, matching the source
+image), never converted to a template — which also surfaced a genuine gap in the role's
+idempotence check (it tested "does a VM exist at this vmid", not "is it a finished template"),
+fixed alongside the `ide2` bug.
+
+Confirmed the new guard against this exact state before destroying anything: re-running
+`vm_template` against the still-partial VM 9000 correctly failed loudly with a clear message
+naming the problem, rather than silently skipping it as "already built".
+
+```bash
+qm destroy 9000
+```
+
+**Net state:** vmid 9000 free again, its LVM disk (`vm-9000-disk-0`) removed. Confirmed via
+`qm list` showing nothing. Not a revert of unwanted state — a deliberate reset so the fixed
+role could rebuild the template cleanly end-to-end, confirmed with the user before running.
+
+### 2026-08-21 — `pipx`/`python3-venv` test-installed and removed while diagnosing the `proxmoxer` version gap
+
+`vm_template`'s first real `--check` run against the host failed: `Requires proxmoxer 2.3 or
+newer; found version 2.2.0` — a hard floor in every `community.proxmox` module's shared base
+class, not specific to one module or feature. Debian 13's own repo has no newer candidate
+(`apt-cache policy python3-proxmoxer` shows only `2.2.0-1` available).
+
+While diagnosing the fix, both `pipx` and `python3-venv` were installed to test isolated-venv
+approaches, and `proxmoxer` was installed into two throwaway environments:
+
+```bash
+sudo apt-get install -y pipx
+pipx install --system-site-packages proxmoxer          # rejected: proxmoxer has no CLI
+                                                          # entry point, so pipx refused to
+                                                          # keep the venv at all
+sudo apt-get install -y python3-venv
+python3 -m venv --system-site-packages /tmp/proxmoxer-test-venv
+/tmp/proxmoxer-test-venv/bin/pip install "proxmoxer>=2.3"   # confirmed: 2.3.0, and
+                                                              # --system-site-packages
+                                                              # correctly inherits `requests`
+```
+
+Reverted immediately after confirming the approach:
+
+```bash
+rm -rf /tmp/proxmoxer-test-venv
+pipx uninstall proxmoxer   # no-op — nothing was ever actually installed under pipx
+rm -rf ~/.local/share/pipx
+sudo apt-get purge -y pipx python3-venv
+```
+
+**Net state: `pipx` and `python3-venv` not installed** — the same state as before this
+diagnosis. Confirmed via `which pipx python3-venv` returning nothing after the purge.
+
+**Real fix, codified in `pve_base`:** a plain `python3 -m venv --system-site-packages` (not
+`pipx`, which is for CLI applications with entry points and refuses to manage a pure library
+like `proxmoxer`) at a fixed path, with `pip install "proxmoxer>=2.3"` inside it, and
+`ansible_python_interpreter` pointed at that venv's `python3` for the plays that use
+`community.proxmox.*` modules. See `roles/pve_base/README.md` and `playbooks/provision_vms.yml`.
+
 ### 2026-08-20 — `sshd` never reloaded after `ssh.yml`'s first real run; fixed by hand, then closed in the role
 
 `TAGS=ssh make harden` completed and wrote a correct, fully-hardened

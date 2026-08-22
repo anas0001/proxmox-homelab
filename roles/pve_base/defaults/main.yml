@@ -37,7 +37,16 @@ pve_base_packages:
   - htop
   - lvm2          # thin-pool tooling (present on PVE, pinned here explicitly)
   - chrony        # time sync
-  - python3-proxmoxer  # required by the community.proxmox modules
+  # python3-proxmoxer is intentionally NOT enough on its own: Debian 13's
+  # package is 2.2.0, and every community.proxmox module requires 2.3+
+  # (a hard, unconditional check in its shared base class — confirmed live,
+  # "Requires proxmoxer 2.3 or newer; found version 2.2.0" on a real run).
+  # Kept installed anyway for its transitive deps (python3-requests etc.);
+  # a dedicated venv is what actually gets used — see
+  # group_vars/all/main.yml's pve_base_proxmoxer_venv and this role's
+  # tasks/proxmoxer_venv.yml.
+  - python3-proxmoxer
+  - python3-venv
 
 # ── Time synchronisation ───────────────────────────────────────────────────
 # Clock skew breaks TLS validation, API token authentication and log
@@ -102,3 +111,11 @@ pve_base_sysctl:
   # every guest at once. Reclaim, but only under real pressure.
   - name: vm.swappiness
     value: "10"
+
+# ── Python venv for community.proxmox ─────────────────────────────────────
+# pve_base_proxmoxer_venv is deliberately NOT defined here. It is a
+# group_vars/all/main.yml variable, not a role default, because
+# playbooks/provision_vms.yml needs it too and never invokes this role —
+# role defaults only resolve for tasks running inside that role. See the
+# comment there for the full "why a venv, why not pipx" reasoning; the venv
+# itself is built by tasks/proxmoxer_venv.yml.
