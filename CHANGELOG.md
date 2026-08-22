@@ -53,7 +53,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `vm_provision_allow_destroy=true`, and each VM must independently prove it is a non-template
   VM in the `labs` pool whose name matches the catalogue entry before anything is deleted.
 
+### Changed
+- Timezone is now `Europe/London` for the Proxmox host and every lab guest, present and future,
+  single-sourced as `lab_timezone` in `group_vars/all` so the two cannot drift. A tzdata zone name
+  rather than a fixed offset, so guests follow the GMT/BST transition on their own — verified
+  against the zone's real rules (GMT in January, BST on 2026-08-23, back to GMT on 2026-10-25).
+  Applied live: host and both guests now report `BST +0100` and agree on the time.
+
+  Note the trade this accepts. UTC everywhere makes cross-machine log correlation trivial and has
+  no ambiguous timestamps; `Europe/London` reintroduces one genuinely ambiguous hour each autumn
+  when 01:00–02:00 local happens twice. That cost is documented at `lab_timezone`, which is the
+  single line to change if log correlation ever matters more than wall-clock convenience.
+- `pve_base` now manages the host timezone at all, which it previously did not. The host already
+  happened to be on `Europe/London`, but nothing in the repository set it, so a rebuild would have
+  silently come back as UTC.
+
 ### Fixed
+- `guest_base` was unusable with `--tags`: every scoped run failed with `object of type 'dict' has
+  no attribute 'os_family'`, or silently ran nothing. Two independent causes, both found by
+  actually running `--tags time` rather than by reading the code. Ansible's implicit fact-gathering
+  step inherits the *play's* tags (`configure`), so a `--tags time` run skipped it and left
+  `os_family` undefined; and the `include_tasks` statements carried no tags of their own, so the
+  tag never selected the include and the tagged blocks inside it were never reached. The role now
+  gathers facts itself when they are missing, and tags both the include and the inner block —
+  scoping needs both, and missing either fails differently. All five tags verified working and
+  idempotent against a real guest.
 - `pve_security`: lab guests could route out but not resolve names, so every package install
   hung rather than failed. dnsmasq runs on the host and is the lab's resolver, but the host
   firewall's default-DROP inbound policy had no rule for the lab subnet. Traffic *forwarded

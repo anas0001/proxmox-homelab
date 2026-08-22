@@ -20,12 +20,12 @@ guest_base_packages:
   - chrony
 
 # ── Time ─────────────────────────────────────────────────────────────────
-# UTC everywhere, deliberately: correlating logs across the host and a dozen
-# guests is miserable when they disagree about what time it is, and a lab
-# that spans timezones has no upside. chrony is already installed and running
-# on Rocky's cloud image; this role makes that a guarantee rather than an
+# Sourced from the shared lab_timezone in group_vars/all so the host and every
+# guest cannot drift apart — see the note there on why it is a tzdata zone
+# name rather than a fixed offset. chrony is already installed and running on
+# Rocky's cloud image; this role makes that a guarantee rather than an
 # accident of the image.
-guest_base_timezone: "UTC"
+guest_base_timezone: "{{ lab_timezone }}"
 
 # ── SSH ──────────────────────────────────────────────────────────────────
 # Cloud-init already sets PasswordAuthentication no on Rocky's image; this

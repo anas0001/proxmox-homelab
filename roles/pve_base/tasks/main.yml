@@ -53,6 +53,34 @@
   when: pve_base_manage_chrony
   tags: [time]
 
+# Gated separately from chrony rather than folded into it: keeping the clock
+# CORRECT (chrony) and choosing how it is DISPLAYED (timezone) are independent
+# concerns, and someone disabling one has no reason to lose the other.
+- name: Set the host timezone
+  community.general.timezone:
+    name: "{{ pve_base_timezone }}"
+  when: pve_base_manage_timezone
+  tags: [time, timezone]
+
+# Reads back what the system actually resolved rather than echoing the
+# variable, so a typo'd zone name shows up as a visible mismatch here instead
+# of as confusing timestamps weeks later. Also surfaces whether the clock is
+# genuinely synchronised, which the timezone says nothing about.
+- name: Read the host's resolved time settings
+  ansible.builtin.command: timedatectl show -p Timezone -p NTPSynchronized --value
+  register: pve_base_timedate
+  changed_when: false
+  check_mode: false
+  tags: [time, timezone]
+
+- name: Report the host's time settings
+  ansible.builtin.debug:
+    msg: >-
+      Host timezone {{ (pve_base_timedate.stdout_lines | default(['?']))[0] }},
+      NTP synchronised = {{ (pve_base_timedate.stdout_lines | default(['?', '?']))[1] | default('?') }}
+      (system clock is UTC underneath; this is display only)
+  tags: [time, timezone]
+
 - name: Include the thin-pool guard
   ansible.builtin.include_tasks: thin_pool_guard.yml
   tags: [storage, guard]

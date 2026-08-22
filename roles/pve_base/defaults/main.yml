@@ -54,6 +54,19 @@ pve_base_packages:
 # boot, so a wrong clock here becomes a wrong clock everywhere.
 pve_base_manage_chrony: true
 
+# Host timezone. Sourced from the shared lab_timezone in group_vars/all, which
+# every lab guest also reads, so the hypervisor and its guests cannot disagree
+# about what time it is — see the note there on why it is a tzdata zone name
+# and not a fixed offset.
+#
+# This is display/interpretation only: the system clock is UTC underneath
+# regardless, and chrony above is what keeps it correct. Changing it does
+# change how every subsequent log line, `pvesm`/`qm` task timestamp and cron
+# schedule on this host reads, so it is a deliberate setting rather than
+# cosmetic.
+pve_base_manage_timezone: true
+pve_base_timezone: "{{ lab_timezone }}"
+
 # ── Thin-pool guard ────────────────────────────────────────────────────────
 # THE most important task in this role.
 #

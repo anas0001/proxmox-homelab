@@ -106,6 +106,14 @@ See [`defaults/main.yml`](defaults/main.yml); every variable is documented there
 
 `configure`, plus `packages`, `time`, `ssh`, `firewall`, `updates` for scoping.
 
-Each task file wraps its tasks in a tagged `block` rather than relying on the tag of the
-`include_tasks` that pulls it in — tags on a dynamic include do **not** propagate to the tasks
-inside it, so `--tags ssh` would otherwise match the include and then run nothing.
+Scoping needs **both** halves, and missing either one fails in a different, confusing way:
+
+- a tag on the `include_tasks` statement, or `--tags ssh` never selects the include at all and the
+  run does nothing while reporting success;
+- a tag on a `block` wrapping the tasks *inside* each file, because tags on a dynamic include do
+  not propagate to the tasks it pulls in.
+
+A tag-scoped run also skips Ansible's implicit fact gathering, since that step inherits the
+**play's** tags (`configure`) rather than the role's. `tasks/main.yml` therefore gathers facts
+itself when they are absent — without it, `--tags time` dies on `object of type 'dict' has no
+attribute 'os_family'`.

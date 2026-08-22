@@ -3,7 +3,10 @@
 guest_base_packages: [vim, git, chrony, tmux, curl]
 guest_base_enable_firewall: true
 guest_base_ssh_password_auth: false
-guest_base_timezone: "UTC"
+# Timezone deliberately NOT pinned here. It comes from the role default, which
+# reads the shared `lab_timezone` in group_vars/all — the single place the host
+# and every guest both take it from. Re-stating it here would let the guests
+# silently drift from the host the next time one of the two was edited.
 
 # ── Reaching the guests from the control node ────────────────────────────
 # Lab guests live on 10.10.10.0/24, an isolated network with no uplink and no

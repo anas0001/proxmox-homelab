@@ -35,6 +35,26 @@ lab_domain: "homelab.local"
 # documented for pve_base_proxmoxer_venv below.
 lab_bridge: vmbr1
 
+# ── Time ────────────────────────────────────────────────────────────────
+# One timezone for the Proxmox host and every lab guest, present and future.
+# Defined here rather than in either role because it has to be in scope for
+# BOTH pve_bootstrap.yml (pve_base) and configure_guests.yml (guest_base);
+# a role default is only in scope inside its own role.
+#
+# `Europe/London` is the tzdata zone, NOT a fixed offset — it carries the
+# GMT/BST transition rules, so guests follow British Summer Time on their own
+# with nothing to change twice a year. Writing `GMT` or `UTC+1` instead would
+# pin an offset and be wrong for half the year, in opposite directions.
+#
+# Note the trade being made: UTC everywhere makes correlating logs across the
+# host and a dozen guests trivial, because nothing has to be mentally shifted
+# and no timestamp is ambiguous. Europe/London reintroduces one genuinely
+# ambiguous hour each autumn, when 01:00-02:00 local happens twice. That is a
+# real cost paid for the convenience of machines that agree with the clock on
+# the wall. If log correlation ever becomes the bigger problem, this is the
+# single line to change.
+lab_timezone: "Europe/London"
+
 # ── Python venv for community.proxmox ────────────────────────────────
 # Defined here (group_vars/all), not inside roles/pve_base/defaults/main.yml,
 # because it must resolve in playbooks/provision_vms.yml too, and that play
