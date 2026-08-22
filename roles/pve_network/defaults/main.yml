@@ -8,7 +8,11 @@
 # the host — Phase 2's VLAN/switching labs trunk into it, and the NAT network
 # below rides on it for lab guests that just need connectivity rather than a
 # VLAN topology to practise on.
-pve_network_lab_bridge: vmbr1
+# Sourced from the shared lab_bridge in group_vars/all so pve_security can
+# scope its DNS/DHCP allow rule to the same interface without duplicating the
+# name — see the note on lab_bridge there. Same value as before, just
+# single-sourced.
+pve_network_lab_bridge: "{{ lab_bridge }}"
 pve_network_lab_bridge_comment: "isolated lab L2 (no uplink) - VLAN-aware"
 
 # ── NAT lab network ──────────────────────────────────────────────────────────

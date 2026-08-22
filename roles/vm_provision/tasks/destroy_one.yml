@@ -1,0 +1,117 @@
+---
+# Tears down a single lab VM. Reached only with vm_provision_state=absent,
+# and every VM still has to clear the guards below individually.
+#
+# The whole file is written on the assumption that it will one day be run by
+# accident. Nothing here is destructive until four separate things agree: the
+# operator asked for teardown, the vmid resolves to a VM, that VM is inside the
+# lab pool the token is scoped to, and its name matches the catalogue entry
+# being torn down.
+
+- name: Set convenience facts for this VM
+  ansible.builtin.set_fact:
+    vm_provision_spec: "{{ vm_provision_vms[vm_provision_name] }}"
+
+- name: Refuse to tear down without an explicit opt-in
+  ansible.builtin.assert:
+    that:
+      - vm_provision_allow_destroy | bool
+    fail_msg: >-
+      Refusing to destroy {{ vm_provision_name }}: vm_provision_state is
+      'absent' but vm_provision_allow_destroy is false. Teardown deletes the
+      VM and its disks, including anything the lab wrote to them. Re-run with
+      `-e vm_provision_allow_destroy=true` if that is genuinely what you want.
+    success_msg: "Teardown authorised for {{ vm_provision_name }}"
+
+- name: Check what exists at this vmid
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+  register: vm_provision_doomed
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Note what was found at this vmid
+  ansible.builtin.set_fact:
+    vm_provision_doomed_vm: "{{ (vm_provision_doomed.proxmox_vms | default([]))[0] | default({}) }}"
+
+# Nothing to do rather than an error: tearing down a lab that is already gone
+# is a successful outcome, and failing here would make `absent` runs unusable
+# for cleaning up a partially-provisioned set.
+- name: Report that this VM is already gone
+  ansible.builtin.debug:
+    msg: >-
+      {{ vm_provision_name }} (vmid {{ vm_provision_spec.vmid }}) does not
+      exist — nothing to tear down.
+  when: not vm_provision_doomed_vm
+
+- name: Tear this VM down
+  when: vm_provision_doomed_vm | length > 0
+  block:
+    # The pool is the whole security boundary of this automation, so it is
+    # also the right boundary for destruction. A VM outside it is, by
+    # definition, not something this role created.
+    - name: Refuse to destroy anything outside the lab pool or not matching this VM
+      ansible.builtin.assert:
+        that:
+          - vm_provision_doomed_vm.pool | default('') == vm_provision_pool
+          - vm_provision_doomed_vm.name | default('') == vm_provision_name
+          - not (vm_provision_doomed_vm.template | default(false))
+        fail_msg: >-
+          Refusing to destroy vmid {{ vm_provision_spec.vmid }}: expected a
+          non-template VM named '{{ vm_provision_name }}' in pool
+          '{{ vm_provision_pool }}'. Found name
+          '{{ vm_provision_doomed_vm.name | default('?') }}' in pool
+          '{{ vm_provision_doomed_vm.pool | default('none') }}', template flag
+          {{ vm_provision_doomed_vm.template | default(false) }}. A template at
+          this vmid is almost certainly one of vm_template's golden images,
+          which this role must never delete. Nothing was changed.
+        success_msg: "{{ vm_provision_name }} confirmed as a lab VM in {{ vm_provision_pool }}"
+
+    # Stopped explicitly rather than by passing force=true to the delete.
+    # proxmox_kvm's absent path on a running VM without force exits
+    # changed=false with "Stop it before deletion or use force=true" — a
+    # silent no-op that reads as success in a play recap. Making the stop its
+    # own task means the teardown either visibly stops the VM or visibly fails.
+    - name: Stop this VM before deleting it
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ vm_provision_api_host }}"
+        api_user: "{{ vm_provision_api_user }}"
+        api_token_id: "{{ vm_provision_api_token_id }}"
+        api_token_secret: "{{ vm_provision_api_token_secret }}"
+        validate_certs: "{{ vm_provision_api_validate_certs }}"
+        node: "{{ vm_provision_node }}"
+        vmid: "{{ vm_provision_spec.vmid }}"
+        state: stopped
+        force: true
+        timeout: "{{ vm_provision_boot_timeout }}"
+
+    # purge removes the VM's references from backup jobs, HA and replication
+    # as well as deleting it. destroy_unreferenced_disks is deliberately NOT
+    # set: it reaches beyond this VM's own config to any volume on the storage
+    # that looks unreferenced, which is far too broad a blast radius for a
+    # routine lab teardown.
+    - name: Delete this VM and its disks
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ vm_provision_api_host }}"
+        api_user: "{{ vm_provision_api_user }}"
+        api_token_id: "{{ vm_provision_api_token_id }}"
+        api_token_secret: "{{ vm_provision_api_token_secret }}"
+        validate_certs: "{{ vm_provision_api_validate_certs }}"
+        node: "{{ vm_provision_node }}"
+        vmid: "{{ vm_provision_spec.vmid }}"
+        purge: true
+        timeout: "{{ vm_provision_boot_timeout }}"
+        state: absent
+
+    - name: Report the torn-down VM
+      ansible.builtin.debug:
+        msg: >-
+          {{ vm_provision_name }} (vmid {{ vm_provision_spec.vmid }}) and its
+          disks have been deleted. The golden template it was cloned from is
+          untouched — re-run without vm_provision_state=absent to rebuild it.

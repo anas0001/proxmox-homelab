@@ -207,6 +207,90 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-22 — host.fw backed up by hand, and a test package installed in a lab guest, while fixing lab DNS
+
+Before changing the host firewall over the SSH connection that firewall governs, the live rules
+were copied aside so a bad rule could be reverted without console access:
+
+```bash
+cp /etc/pve/nodes/pve/host.fw /root/host.fw.bak-$(date +%Y%m%d-%H%M%S)
+```
+
+The change applied cleanly (`pve-firewall status` → `Status: enabled/running`, and the new rules
+appear in `pve-firewall compile` above the `DROP`), so the backup was removed afterwards. The
+rules themselves are codified in `pve_security`, not applied by hand.
+
+To prove the fix actually worked rather than trusting the compiled chain, a package was installed
+in lab guest `node1` and then removed:
+
+```bash
+sudo dnf -y install tree     # exit 0 after the fix; exit 124 (hung) before it
+sudo dnf -y remove tree
+```
+
+**Net state:** the backup file is gone, `tree` is not installed, and `node1` is back to what it
+was apart from dnf's metadata cache. `node1` carries a `clean` snapshot predating both, so any
+residue can be rolled back at will.
+
+### 2026-08-22 — probe VMs and guest-disk inspection while diagnosing why no cloned VM would boot
+
+`vm_provision`'s first real run provisioned `node1` correctly and then failed, as designed, on
+its "wait for SSH" gate: the guest never answered. The VM was running but had written 1 KB in ten
+minutes. Diagnosing that needed several one-off actions against the host, none of which are
+codified anywhere:
+
+```bash
+# Capture the VM's VGA console through the QEMU monitor (screendump writes a PPM)
+echo 'screendump /tmp/vm111.ppm' | qm monitor 111
+
+# Clone the template by hand, twice, to isolate whether the fault was in
+# vm_provision's changes (resize, extra disks, cloud-init) or in the template
+# itself. It was the template: a clone with NOTHING changed hung identically.
+qm clone 9000 991 --name probe-plain --full 1 --storage local-lvm
+qm set 991 --bios ovmf --efidisk0 local-lvm:0,efitype=4m,pre-enrolled-keys=0
+qm set 991 --cpu host
+
+# Read the guest's /boot read-only, to check the image imported intact
+losetup -r -o 108003328 --sizelimit 1048576000 "$LO" /dev/pve/vm-991-disk-0
+mount -o ro,norecovery "$LO" /mnt/probe-boot
+xfs_db -r -c version "$LO"
+umount /mnt/probe-boot && losetup -d "$LO" && rmdir /mnt/probe-boot
+
+# Capture the guest's SERIAL console across a reboot — the step that actually
+# found the answer. A short Python script connected to
+# /var/run/qemu-server/991.serial0, then issued `qm reset 991` and recorded.
+```
+
+**Why the serial capture mattered.** The VGA console showed a GRUB banner and then nothing, which
+looked exactly like a bootloader hang and cost real time chasing GRUB, XFS feature flags and
+BIOS-versus-UEFI. None of that was the fault. The image's kernel command line carries
+`console=ttyS0,115200n8` and **no** `console=tty0`, so everything after GRUB — including the
+panic — printed only to the serial port. Reading it gave the answer immediately:
+
+```
+Run /init as init process
+Fatal glibc error: CPU does not support x86-64-v2
+Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+```
+
+Proxmox's default CPU model (`kvm64`) does not provide the x86-64-v2 baseline that Rocky 9 — and
+every EL9 distribution — requires, so glibc aborts before init starts. Confirmed by setting
+`--cpu host` on the probe VM and nothing else: the same disk went from 1 KB written to 97 MB and
+a fully booted guest.
+
+**Also found, separately:** the template's cloud-init drive was created on `local`, which does not
+carry the `images` content type on this host. Any VM using it refuses to start with "storage
+'local' does not support content-type 'images'". `vm_provision` passes an explicit `storage:` on
+its clone and so silently relocated the drive, which is why this only surfaced on a hand-made
+`qm clone`.
+
+Both are fixed in `vm_template` (`vm_template_cpu`, and the cloud-init drive now on
+`vm_template_vm_storage`), so this is recorded as diagnosis, not as a manual change to reapply.
+
+**Net state:** probe VM 991 destroyed, the loop device detached and `/mnt/probe-boot` removed,
+`node1`/`node2` and template 9000 destroyed for a clean rebuild against the fixed role. Confirmed
+with `qm list` empty and `lvs` showing no `vm-*` volumes left behind.
+
 ### 2026-08-22 — VM 9000 destroyed a second time after an SSH timeout mid-build, then rebuilt successfully
 
 After the `ide2`/`update_unsafe` and template-conversion (`update: true`) fixes below were both

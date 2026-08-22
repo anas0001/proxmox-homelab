@@ -1,2 +1,212 @@
 ---
-# Overridable defaults for vm_provision. Every variable here is documented.
+# Clones the golden templates vm_template built into running lab VMs, applies
+# cloud-init identity and addressing, sizes storage, boots, and snapshots a
+# pristine `clean` state to roll back to.
+#
+# Convergent rather than one-shot: every step re-reads real state and is safe
+# to re-run. This is a deliberate difference from vm_template, which fails
+# loudly on a half-built template because its final step (the template flag)
+# cannot be re-applied to a VM that is already flagged. Nothing here is
+# terminal in that way, so a run interrupted halfway is finished simply by
+# running it again.
+
+# ── API connection ──────────────────────────────────────────────────────
+# Same least-privilege token pve_access created and vm_template already uses.
+# pve_api_host/_user/_token_id are set per-host in inventories/homelab/hosts.yml
+# specifically for community.proxmox.* auth — not pve_access's own internal
+# pve_access_user/_token_id vars, which are that role's private naming.
+vm_provision_api_host: "{{ pve_api_host }}"
+vm_provision_api_user: "{{ pve_api_user }}"
+vm_provision_api_token_id: "{{ pve_api_token_id }}"
+vm_provision_api_token_secret: "{{ vault_pve_api_token_secret }}"
+# The Proxmox node name (not the inventory hostname key), set per-host in
+# inventories/homelab/hosts.yml as pve_node_name.
+vm_provision_node: "{{ pve_node_name }}"
+# Self-signed until the ACME/internal-CA decision in pve_security's manual
+# report lands; flip to true then and record it in docs/06-out-of-band.md.
+vm_provision_api_validate_certs: false
+
+# ── Storage and pool ─────────────────────────────────────────────────────
+# The pool is the security boundary, not a label: the API token's VM
+# privileges are granted on /pool/labs alone, so a clone that landed outside
+# the pool would be a VM this automation could no longer manage. Passed at
+# clone time deliberately — proxmox_kvm drops `pool` on an update, because
+# the qemu/<vmid>/config endpoint does not accept it (confirmed in the
+# module's own source, which deletes the key when update is set).
+vm_provision_vm_storage: local-lvm
+vm_provision_pool: labs
+
+# ── Guest identity injected via cloud-init ───────────────────────────────
+# Public key only. The matching private key never leaves the control node.
+vm_provision_ci_user: "{{ guest_admin_user }}"
+vm_provision_ci_sshkey: "{{ guest_admin_ssh_key }}"
+
+# ── Lab addressing ───────────────────────────────────────────────────────
+# Static, from inventory (see vm_provision_ip in tasks/provision_one.yml),
+# rather than DHCP: dnsmasq's pool on this subnet is 10.10.10.100-200 and
+# every lab VM's inventory address sits deliberately below it, so a guest's
+# address is decided by this repository and not by lease order.
+#
+# The prefix length is split off the subnet string rather than derived with
+# ansible.utils/netaddr's ipaddr filter — that filter needs the `netaddr`
+# Python package, which is not installed in this project's control-node venv
+# (confirmed, not assumed) and is not worth adding as a dependency to read
+# one integer off a string this repo already controls the format of.
+vm_provision_lab_gateway: "{{ lab_nat_gateway }}"
+vm_provision_lab_prefix: "{{ lab_nat_subnet.split('/')[1] }}"
+vm_provision_lab_domain: "{{ lab_domain }}"
+# dnsmasq on the host serves DNS for the lab subnet on the gateway address
+# (bound to vmbr1 only — see pve_network), so the gateway is also the resolver.
+vm_provision_nameservers:
+  - "{{ lab_nat_gateway }}"
+
+# ── Templates available to clone from ────────────────────────────────────
+# Keyed the same as vm_template_images so a spec below names `rocky9` and gets
+# whatever vmid that template was built at, rather than repeating the number.
+vm_provision_templates:
+  rocky9:
+    name: tmpl-rocky9
+    vmid: 9000
+
+# ── Lab VM catalogue ─────────────────────────────────────────────────────
+# Sizing mirrors the VM inventory table in docs/02-architecture.md. vmid is
+# fixed rather than auto-assigned, and encodes the guest's address: node1 is
+# 10.10.10.11 -> vmid 111, ceph2 is 10.10.10.22 -> vmid 122. A stable, derivable
+# id makes "which VM is this" answerable from either direction, and keeps every
+# lab VM clear of the 9000-range Proxmox convention reserves for templates.
+#
+# The address itself is deliberately NOT here: it is read from the guest's
+# `ansible_host` in the (gitignored) real inventory, so the mapping lives in
+# exactly one place — the same place guest_base and every later play reach the
+# VM through. docs/03-network.md requires that mapping stay out of committed
+# files.
+#
+# Disks are thin-provisioned: `disk_gb` is the virtual size the guest sees,
+# not space consumed. The 80% thin-pool guard in pve_base is what actually
+# bounds this — see the storage plan in docs/02-architecture.md.
+vm_provision_vms:
+  # Phase 1 — Linux fundamentals. The extra disks exist to be broken and
+  # rebuilt: LVM, filesystems, RAID practice.
+  node1:
+    vmid: 111
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, linux]
+    extra_disks:
+      - {key: scsi1, size_gb: 5}
+      - {key: scsi2, size_gb: 5}
+  node2:
+    vmid: 112
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, linux]
+    extra_disks:
+      - {key: scsi1, size_gb: 5}
+      - {key: scsi2, size_gb: 5}
+
+  # Phase 2 — Ceph. Two OSD disks each; these genuinely write at 3x
+  # replication, so this set is the real consumer of the thin pool. Spelled
+  # out per VM rather than collapsed with YAML anchors: the repetition is the
+  # point, since this block is meant to be read against the VM inventory table
+  # in docs/02-architecture.md and diffed when a lab's sizing changes.
+  ceph1:
+    vmid: 121
+    template: rocky9
+    cores: 2
+    memory: 4096
+    disk_gb: 20
+    tags: [lab, storage]
+    extra_disks:
+      - {key: scsi1, size_gb: 10}
+      - {key: scsi2, size_gb: 10}
+  ceph2:
+    vmid: 122
+    template: rocky9
+    cores: 2
+    memory: 4096
+    disk_gb: 20
+    tags: [lab, storage]
+    extra_disks:
+      - {key: scsi1, size_gb: 10}
+      - {key: scsi2, size_gb: 10}
+  ceph3:
+    vmid: 123
+    template: rocky9
+    cores: 2
+    memory: 4096
+    disk_gb: 20
+    tags: [lab, storage]
+    extra_disks:
+      - {key: scsi1, size_gb: 10}
+      - {key: scsi2, size_gb: 10}
+
+  # Phase 3 — HPC. Only the head node carries the extra disk that backs the
+  # parallel filesystem the compute nodes mount.
+  hpc-head:
+    vmid: 131
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, hpc]
+    extra_disks:
+      - {key: scsi1, size_gb: 10}
+  hpc-c1:
+    vmid: 132
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, hpc]
+    extra_disks: []
+  hpc-c2:
+    vmid: 133
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, hpc]
+    extra_disks: []
+  hpc-c3:
+    vmid: 134
+    template: rocky9
+    cores: 2
+    memory: 2048
+    disk_gb: 20
+    tags: [lab, hpc]
+    extra_disks: []
+
+# Which of the catalogue above to actually act on. Scoped to the Linux lab by
+# default, matching Phase 1 and the explicit guidance in
+# docs/02-architecture.md not to run every lab set at once: RAM is ample, disk
+# churn is the constraint. Widen this per phase rather than provisioning
+# everything up front.
+vm_provision_build:
+  - node1
+  - node2
+
+# ── Snapshot ─────────────────────────────────────────────────────────────
+# One snapshot per VM, taken once the guest is genuinely up, so a lab that has
+# been taken apart can be reset to a known-good post-cloud-init state. Kept to
+# a single snapshot deliberately: snapshots grow as the VM diverges, and the
+# storage plan has no room for a chain of them.
+vm_provision_snapshot_name: clean
+vm_provision_snapshot_description: "Pristine post-cloud-init state - roll back here to reset the lab"
+
+# ── Lifecycle ────────────────────────────────────────────────────────────
+# `absent` tears lab VMs down. Guarded by vm_provision_allow_destroy, which
+# this role never sets true for you: a teardown that only needs one variable
+# is one typo away from running during an ordinary provisioning pass.
+vm_provision_state: present
+vm_provision_allow_destroy: false
+
+# ── Timeouts ─────────────────────────────────────────────────────────────
+# proxmox_kvm defaults to 30s, which is not enough for a full clone of a
+# 10 GiB template on this host. The boot timeout gates how long the role waits
+# for a guest to finish cloud-init and accept SSH.
+vm_provision_clone_timeout: 600
+vm_provision_boot_timeout: 300

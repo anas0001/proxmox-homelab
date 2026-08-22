@@ -29,5 +29,21 @@ log_level_in: info
 {% for port in pve_security_firewall_ports %}
 IN ACCEPT -source +management -p tcp -dport {{ port }} # port {{ port }}
 {% endfor %}
+{% if pve_security_allow_lab_services | default(false) %}
+
+# Lab guests reaching services ON the host itself — dnsmasq's DNS and DHCP.
+# Without these the labs can route out but cannot resolve anything, so package
+# installs hang rather than fail; see the note on pve_security_lab_services in
+# defaults/main.yml. Restricted by BOTH source subnet and inbound interface, so
+# a spoofed lab source arriving on the management bridge does not match.
+#
+# These MUST stay above the `IN DROP` below: rules are evaluated in order, and
+# anything after that line is unreachable — which is exactly what happens to
+# Proxmox's own auto-generated management rules, visible in
+# `pve-firewall compile` output sitting dead below it.
+{% for rule in pve_security_lab_service_rules %}
+IN ACCEPT -i {{ pve_security_lab_bridge }} -source {{ pve_security_lab_subnet }} -p {{ rule.proto }} -dport {{ rule.dport }} # {{ rule.comment }}
+{% endfor %}
+{% endif %}
 
 IN DROP # everything else inbound denied by the cluster policy anyway; explicit for clarity
