@@ -190,3 +190,55 @@ workstation by default. Two options, in `docs/02-architecture.md`:
 
 The subnet-router route requires `tailscale up`, which re-authenticates and drops the tunnel
 Ansible runs over. Record it in `docs/06-out-of-band.md` first, and have console access to hand.
+
+### Ansible already reaches the guests — it jumps through the host
+
+No route is needed for **SSH**, and therefore none is needed for Ansible.
+`inventories/homelab/group_vars/guests/main.yml` sets an `ansible_ssh_common_args` that proxies
+every guest connection through the Proxmox host, which is the lab subnet's gateway. This works
+today, over the connection you already have, with nothing changed on the host:
+
+```bash
+ansible linux_lab -m ping          # node1/node2 answer from your workstation
+ansible-playbook playbooks/configure_guests.yml
+```
+
+The jump host is read from the `pve` inventory group rather than hardcoded, so the committed file
+carries no addresses.
+
+For an interactive shell, `scp`, or port-forwarding, add the same jump to `~/.ssh/config` —
+substituting your real host address and lab subnet:
+
+```sshconfig
+Host pvelab
+    HostName <your-host-tailnet-address>
+    User svc_admin
+    IdentityFile ~/.ssh/id_ed25519_homelab
+
+Host 10.10.10.*
+    User svc_admin
+    IdentityFile ~/.ssh/id_ed25519_homelab
+    ProxyJump pvelab
+    # Lab guests are rebuilt constantly and get a new host key each time.
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+```
+
+Then `ssh 10.10.10.11` works directly.
+
+### What still needs the subnet route
+
+Jumping fixes SSH only. It gives the workstation **no route**, so these remain unavailable until
+the Tailscale subnet router in `docs/06-out-of-band.md` entry 4 is advertised and approved:
+
+| Want to… | Works via jump host? |
+|---|---|
+| SSH / `scp` / Ansible | Yes |
+| `ping` a guest | No — needs the route |
+| VNC / XRDP to a guest desktop | No — needs the route (or a per-port `ssh -L` tunnel) |
+
+A single forwarded port is a usable stopgap for one service without touching the host:
+
+```bash
+ssh -L 5901:10.10.10.11:5901 pvelab    # then point the VNC client at localhost:5901
+```

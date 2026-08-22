@@ -4,3 +4,47 @@ guest_base_packages: [vim, git, chrony, tmux, curl]
 guest_base_enable_firewall: true
 guest_base_ssh_password_auth: false
 guest_base_timezone: "UTC"
+
+# ── Reaching the guests from the control node ────────────────────────────
+# Lab guests live on 10.10.10.0/24, an isolated network with no uplink and no
+# route advertised anywhere. The Proxmox host is its gateway and the ONLY
+# thing that can reach it, which is deliberate (docs/03-network.md): the
+# networking and storage labs do disruptive things — rogue DHCP, spanning-tree
+# experiments, deliberately corrupted storage — that have no business on the
+# same layer 2 as real household devices.
+#
+# So the control node reaches guests by jumping through the host. This needs
+# no change on the host, no console access, and no Tailscale route: it is
+# plain SSH forwarding over the connection that already works.
+#
+# The jump host is read from the `pve` group rather than hardcoded, so the
+# real address stays in the gitignored inventory and this committed file
+# contains no topology at all.
+#
+# NOTE: this covers SSH and therefore Ansible. It does NOT give the workstation
+# a route, so `ping`, VNC and XRDP to a guest still will not work — those need
+# the Tailscale subnet router in docs/06-out-of-band.md entry 4, which has to
+# be run from a console because it drops the tunnel Ansible connects over.
+ansible_ssh_common_args: >-
+  -o UserKnownHostsFile=/dev/null
+  -o StrictHostKeyChecking=no
+  -o ProxyCommand="ssh -W %h:%p -q
+  -i {{ hostvars[groups['pve'][0]].ansible_ssh_private_key_file }}
+  -o StrictHostKeyChecking=accept-new
+  {{ hostvars[groups['pve'][0]].ansible_user }}@{{ hostvars[groups['pve'][0]].ansible_host }}"
+
+# Host-key checking is disabled for LAB GUESTS ONLY — never for the Proxmox
+# host, which keeps ansible.cfg's `host_key_checking = True` and a real
+# known_hosts entry.
+#
+# This is a deliberate trade, not an oversight. Lab guests are cattle:
+# vm_provision destroys and recreates them, and every rebuild generates a new
+# host key at the same address. With key pinning, the workflow this repository
+# exists to enable — tear the lab down, build it again — would fail on its own
+# second run with REMOTE HOST IDENTIFICATION HAS CHANGED and require a manual
+# `ssh-keygen -R` per guest. Pinning also buys very little here: the only path
+# to these addresses runs through the host, so an attacker positioned to spoof
+# a guest already holds the hypervisor.
+#
+# /dev/null rather than a real file so recreated guests never accumulate stale
+# entries in anyone's ~/.ssh/known_hosts.
