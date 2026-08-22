@@ -7,6 +7,39 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- `vm_provision` role: clones the golden templates into running lab VMs — clone, cloud-init
+  identity and static addressing, disk sizing, extra lab disks, boot, readiness gate, `clean`
+  snapshot — plus a guarded teardown path. Cloning is deliberately two tasks: `proxmox_kvm`
+  passes only `format`/`full`/`pool`/`snapname`/`storage`/`target` to the API on a clone (its
+  source's `valid_clone_params`, not documented in its prose) and **silently drops** cores,
+  memory, `ciuser`, `sshkeys` and `ipconfig`, while `clone` and `update` are mutually exclusive
+  in the argument spec — so a single "clone and configure" task is impossible, and a version of
+  this role that looked correct and configured nothing would have been very easy to write.
+  Guest addresses are read from each VM's `ansible_host` in the gitignored inventory rather than
+  duplicated in the role, and vmids encode the address (`node1` at `10.10.10.11` is vmid 111).
+  Readiness is SSH on the guest, waited for from the Proxmox host — the lab subnet's gateway, and
+  reachable regardless of whether the Tailscale subnet route is up — rather than a guest-agent
+  ping, which proves only that the agent started. The boot disk is grown *before* first boot so
+  cloud-init's `growpart` expands the filesystem into it (verified live: a 20 GB spec yields a
+  19 GB root filesystem in the guest). Teardown requires both `vm_provision_state=absent` and
+  `vm_provision_allow_destroy=true`, and each VM must independently prove it is a non-template
+  VM in the `labs` pool whose name matches the catalogue entry before anything is deleted.
+
+### Fixed
+- `vm_template`: every clone of the golden template panicked before init and no lab VM could
+  boot. Proxmox's default CPU model (`kvm64`) does not provide the **x86-64-v2** baseline that
+  Rocky 9 — and every EL9 distribution — requires, so glibc aborted immediately: `Fatal glibc
+  error: CPU does not support x86-64-v2`, followed by `Kernel panic - not syncing: Attempted to
+  kill init!`. Fixed with `vm_template_cpu` (`host`; this is a single-node design with no
+  migration target). The failure was invisible on the VGA console — the image's kernel command
+  line carries `console=ttyS0,115200n8` with no `console=tty0`, so everything after the GRUB
+  banner printed only to the serial port, which reads convincingly like a bootloader hang; the
+  panic was found by capturing the serial console across a reboot.
+- `vm_template`: the cloud-init drive was created on `vm_template_iso_storage` (`local`), which
+  does not carry the `images` content type on this host, so any VM using it refused to start with
+  "storage 'local' does not support content-type 'images'". Now created on
+  `vm_template_vm_storage`. `vm_provision` passes an explicit `storage:` on its clone and so
+  relocated the drive, masking the fault — it only surfaced on a hand-made `qm clone`.
 - `vm_template` role: builds cloud-init golden templates from upstream cloud images via
   `community.proxmox` modules only, never SSH — download (checksum-verified against Rocky's
   published `.CHECKSUM` file), create a minimal VM shell, import the qcow2 as the boot disk,

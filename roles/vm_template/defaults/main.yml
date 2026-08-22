@@ -71,6 +71,33 @@ vm_template_machine: q35
 vm_template_bios: seabios
 vm_template_scsihw: virtio-scsi-pci
 
+# Proxmox's default CPU model is kvm64, which advertises roughly a Pentium 4's
+# feature set. Rocky 9 — like every EL9 distribution — requires the
+# **x86-64-v2** microarchitecture baseline (SSE4.2, POPCNT, CMPXCHG16B and
+# friends), so a guest on the default model does not merely run slowly: glibc
+# refuses to start at all.
+#
+# Not a theory. On the default model this template booted its kernel fine and
+# then died instantly, captured verbatim off the serial console:
+#
+#   Run /init as init process
+#   Fatal glibc error: CPU does not support x86-64-v2
+#   Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+#
+# The panic prints ONLY to ttyS0 — the image's kernel command line carries
+# `console=ttyS0,115200n8` with no `console=tty0` — so the VGA console shows a
+# GRUB banner and then nothing, which reads convincingly like a bootloader
+# hang and sent the first diagnosis down entirely the wrong path.
+#
+# `host` passes the physical CPU through: correct here because this is a
+# single-node design (docs/02-architecture.md) with no cluster and no
+# migration target, and it gives the labs full performance. If a second node
+# is ever added, change this to a portable named baseline such as
+# `x86-64-v2-AES` so a guest can migrate between hosts with different CPUs —
+# the requirement being satisfied is the v2 baseline, not host passthrough
+# specifically.
+vm_template_cpu: host
+
 # The bridge templates attach a NIC to. This role never starts the template
 # itself — it only matters because proxmox_kvm requires some net device at
 # creation. vmbr1 (built by pve_network), not vmbr0, so a template's

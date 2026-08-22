@@ -1,2 +1,54 @@
 ---
-# tasks file for vm_provision
+# Turns golden templates into running lab VMs: clone, configure cloud-init,
+# size storage, boot, wait for the guest to actually answer, snapshot `clean`.
+#
+# Every step reads real state before acting, and every step is safe to re-run,
+# so an interrupted run is finished by running it again rather than by cleaning
+# up first. Contrast vm_template, which deliberately fails loudly on a partial
+# build because converting to a template is a one-way step.
+#
+# Two things this role never does: touch host storage (it allocates only inside
+# the pool the API token is scoped to), and destroy anything unless explicitly
+# asked twice — vm_provision_state=absent AND vm_provision_allow_destroy=true.
+
+- name: Fail early on an unrecognised lifecycle state
+  ansible.builtin.assert:
+    that:
+      - vm_provision_state in ['present', 'absent']
+    fail_msg: >-
+      vm_provision_state must be 'present' or 'absent', got
+      '{{ vm_provision_state }}'. Anything else is almost certainly a typo, and
+      guessing which one was meant is not a decision this role should make on
+      your behalf.
+    success_msg: "Lifecycle state: {{ vm_provision_state }}"
+  tags: [provision-vms]
+
+- name: Fail early when every named VM is not in the catalogue
+  ansible.builtin.assert:
+    that:
+      - (vm_provision_build | difference(vm_provision_vms.keys() | list)) | length == 0
+    fail_msg: >-
+      vm_provision_build names VMs that have no entry in vm_provision_vms:
+      {{ vm_provision_build | difference(vm_provision_vms.keys() | list) | join(', ') }}.
+      Add a spec for them (sizing, template, disks) or correct the name — this
+      role will not invent sizing for a VM it was not told about.
+    success_msg: "All {{ vm_provision_build | length }} requested VM(s) present in the catalogue"
+  tags: [provision-vms]
+
+- name: Provision each configured lab VM
+  ansible.builtin.include_tasks: provision_one.yml
+  loop: "{{ vm_provision_build }}"
+  loop_control:
+    loop_var: vm_provision_name
+    label: "{{ vm_provision_name }}"
+  when: vm_provision_state == 'present'
+  tags: [provision-vms]
+
+- name: Tear down each configured lab VM
+  ansible.builtin.include_tasks: destroy_one.yml
+  loop: "{{ vm_provision_build }}"
+  loop_control:
+    loop_var: vm_provision_name
+    label: "{{ vm_provision_name }}"
+  when: vm_provision_state == 'absent'
+  tags: [provision-vms]

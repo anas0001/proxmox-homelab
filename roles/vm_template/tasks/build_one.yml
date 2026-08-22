@@ -94,6 +94,10 @@
         machine: "{{ vm_template_machine }}"
         bios: "{{ vm_template_bios }}"
         scsihw: "{{ vm_template_scsihw }}"
+        # Without this every clone panics before init runs — see the long note
+        # on vm_template_cpu in defaults/main.yml. Set at creation rather than
+        # in a later update, so no VM ever exists with the unbootable default.
+        cpu: "{{ vm_template_cpu }}"
         # QEMU guest agent must be requested at creation so vm_provision's
         # later "wait for guest agent" step has something to wait for —
         # cloud images do not enable it themselves.
@@ -195,8 +199,16 @@
         validate_certs: "{{ vm_template_api_validate_certs }}"
         node: "{{ vm_template_node }}"
         vmid: "{{ vm_template_spec.vmid }}"
+        # On vm_template_vm_storage, NOT vm_template_iso_storage. A cloud-init
+        # drive is an `images`-content volume, and `local` does not carry that
+        # content type on this host — Proxmox creates the drive there happily
+        # and then refuses to START any VM using it: "storage 'local' does not
+        # support content-type 'images'". Found by cloning this template by
+        # hand with plain `qm clone`, which reproduces the template's own
+        # storage; vm_provision passes an explicit `storage:` on its clone and
+        # so relocates the drive, masking the fault rather than hitting it.
         ide:
-          ide2: "{{ vm_template_iso_storage }}:cloudinit"
+          ide2: "{{ vm_template_vm_storage }}:cloudinit"
         boot: "order=scsi0"
         update: true
         update_unsafe: true

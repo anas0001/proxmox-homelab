@@ -1,0 +1,300 @@
+---
+# Provisions a single lab VM, keyed by vm_provision_name into
+# vm_provision_vms. Included once per entry in vm_provision_build.
+
+- name: Set convenience facts for this VM
+  ansible.builtin.set_fact:
+    vm_provision_spec: "{{ vm_provision_vms[vm_provision_name] }}"
+    vm_provision_template: "{{ vm_provision_templates[vm_provision_vms[vm_provision_name].template] }}"
+
+# The guest's address is single-sourced from the inventory entry that every
+# later play (guest_base and the per-lab configuration) reaches it through,
+# rather than repeated in this role's catalogue. Two copies of an address
+# drift; one does not. Asserted rather than defaulted, because a silently
+# missing address would produce a VM that boots with DHCP from the dnsmasq
+# pool and then is not reachable at the address the inventory claims.
+- name: Fail with a clear message when this VM has no inventory entry
+  ansible.builtin.assert:
+    that:
+      - vm_provision_name in hostvars
+      - hostvars[vm_provision_name].ansible_host is defined
+    fail_msg: >-
+      {{ vm_provision_name }} has a spec in vm_provision_vms but no
+      `ansible_host` in the inventory, and this role takes the guest's static
+      address from there. Add it under the appropriate lab group in
+      inventories/homelab/hosts.yml (the gitignored real one, not the example),
+      keeping it outside the {{ vm_provision_lab_gateway }} subnet's DHCP pool.
+    success_msg: "{{ vm_provision_name }} -> {{ hostvars[vm_provision_name].ansible_host | default('?') }}"
+
+- name: Resolve this VM's static address from inventory
+  ansible.builtin.set_fact:
+    vm_provision_ip: "{{ hostvars[vm_provision_name].ansible_host }}"
+
+- name: Check what already exists at this vmid
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+  register: vm_provision_existing
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# Guards the case vm_template's build hit for real: a vmid already occupied by
+# something that is not what this role is about to manage. Cloning onto an
+# existing vmid is refused by the module anyway (it exits changed=false), so
+# without this check a name collision would present as a silently skipped
+# clone followed by this role reconfiguring, resizing and snapshotting a VM
+# that belongs to someone else.
+- name: Fail when this vmid is occupied by a different VM
+  ansible.builtin.assert:
+    that:
+      - (vm_provision_existing.proxmox_vms | default([]))[0].name | default(vm_provision_name) == vm_provision_name
+    fail_msg: >-
+      vmid {{ vm_provision_spec.vmid }} is already in use by
+      '{{ (vm_provision_existing.proxmox_vms | default([]))[0].name | default('?') }}',
+      not by '{{ vm_provision_name }}'. Refusing to reconfigure a VM this role
+      did not create. Either free the vmid or give {{ vm_provision_name }} a
+      different one in vm_provision_vms.
+    success_msg: "vmid {{ vm_provision_spec.vmid }} is free or already holds {{ vm_provision_name }}"
+
+# Only `format`, `full`, `pool`, `snapname`, `storage` and `target` reach the
+# API on a clone — confirmed in proxmox_kvm's own source (its
+# `valid_clone_params` list), not inferred. Every other parameter passed here
+# would be accepted by the module and silently dropped, so sizing, cloud-init
+# and the rest are applied by the separate update task below. `clone` and
+# `update` are mutually exclusive in the module's argument spec, so this
+# genuinely cannot be one task.
+#
+# Natively idempotent: the module exits changed=false with "vmid <n> ...
+# already exists" when the target id is taken, which is why re-running this
+# role is cheap rather than destructive.
+#
+# Full clone rather than linked: a linked clone keeps every lab VM dependent
+# on template 9000 forever, which makes rebuilding the template — the thing
+# vm_template is designed to let you do freely — impossible while any lab VM
+# exists. On LVM-thin a full clone still only occupies the blocks actually
+# written, so the cost of that independence is close to zero here.
+- name: Clone the golden template into this VM
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    node: "{{ vm_provision_node }}"
+    clone: "{{ vm_provision_template.name }}"
+    vmid: "{{ vm_provision_template.vmid }}"
+    newid: "{{ vm_provision_spec.vmid }}"
+    name: "{{ vm_provision_name }}"
+    pool: "{{ vm_provision_pool }}"
+    storage: "{{ vm_provision_vm_storage }}"
+    full: true
+    timeout: "{{ vm_provision_clone_timeout }}"
+    state: present
+  register: vm_provision_clone
+
+# Everything the clone dropped, applied in one update. `net` is deliberately
+# absent: the clone inherits net0 from the template (virtio on vmbr1) with a
+# freshly generated MAC, which is exactly what is wanted — and `net` is one of
+# the parameters proxmox_kvm refuses to touch under a plain `update: true`
+# anyway, so setting it here would need update_unsafe for no gain.
+# `ipconfig` is NOT on that refused list (checked, rather than assumed from the
+# fact that it looks like a similar per-index parameter), so cloud-init
+# addressing applies cleanly.
+- name: Apply sizing and cloud-init configuration
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    node: "{{ vm_provision_node }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    cores: "{{ vm_provision_spec.cores }}"
+    memory: "{{ vm_provision_spec.memory }}"
+    agent: "enabled=1"
+    # Lab VMs stay off across a host reboot on purpose. The storage plan in
+    # docs/02-architecture.md is built on running one lab set at a time; a
+    # host reboot that brought every provisioned VM up at once would blow
+    # straight through that assumption without anyone choosing it.
+    onboot: false
+    tags: "{{ vm_provision_spec.tags | default([]) }}"
+    ciuser: "{{ vm_provision_ci_user }}"
+    sshkeys: "{{ vm_provision_ci_sshkey }}"
+    ipconfig:
+      ipconfig0: "ip={{ vm_provision_ip }}/{{ vm_provision_lab_prefix }},gw={{ vm_provision_lab_gateway }}"
+    nameservers: "{{ vm_provision_nameservers }}"
+    searchdomains:
+      - "{{ vm_provision_lab_domain }}"
+    update: true
+    state: present
+
+# Same read-before-resize pattern as vm_template, and for the same reason:
+# proxmox_disk's `resized` state can only grow a disk, so an unconditional
+# resize would attempt a no-op or shrink on every run once the clone already
+# matches. The clone inherits the template's 10 GiB boot disk; lab specs are
+# larger, so this normally does grow it exactly once.
+- name: Read this VM's current disk layout
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    config: current
+  register: vm_provision_disk_check
+  changed_when: false
+  check_mode: false
+
+# Grown before first boot, never after: Rocky's cloud image runs cloud-init's
+# growpart/resizefs on boot, so a disk enlarged now is a filesystem the guest
+# has already expanded into by the time it is reachable. Enlarging it after
+# the guest is up leaves the extra space unclaimed until something inside the
+# guest grows the partition by hand.
+- name: Grow the boot disk to this VM's configured size, if smaller
+  community.proxmox.proxmox_disk:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    disk: scsi0
+    state: resized
+    size: "{{ vm_provision_spec.disk_gb }}G"
+  vars:
+    # Indexing an empty list yields Undefined in Jinja rather than raising,
+    # so `| default('')` catches both "no such VM yet" (a --check run before
+    # the clone has happened) and "no scsi0 key". Verified directly rather
+    # than assumed — the `| first` idiom does raise on an empty list, which
+    # is why it is not used here.
+    vm_provision_current_scsi0: >-
+      {{ (vm_provision_disk_check.proxmox_vms | default([]))[0].config.scsi0 | default('') }}
+    vm_provision_current_disk_gb: >-
+      {{ (vm_provision_current_scsi0 | regex_search('size=([0-9]+)G', '\1')
+          | default([], true) | first | default(0)) | int }}
+  when: vm_provision_current_disk_gb < (vm_provision_spec.disk_gb | int)
+
+# create: regular (the module default) creates the disk when missing and
+# updates options when it already exists. Deliberately not `forced`, which
+# detaches the existing disk and allocates a new one — on a re-run that would
+# silently orphan whatever the lab had written to it.
+- name: Attach this VM's extra lab disks
+  community.proxmox.proxmox_disk:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    disk: "{{ item.key }}"
+    storage: "{{ vm_provision_vm_storage }}"
+    # state=present takes a bare GiB number; state=resized above takes a
+    # suffixed size. Not a typo — the two states genuinely differ, per the
+    # module's own parameter documentation.
+    size: "{{ item.size_gb }}"
+    create: regular
+    state: present
+  loop: "{{ vm_provision_spec.extra_disks | default([]) }}"
+  loop_control:
+    label: "{{ vm_provision_name }} {{ item.key }} ({{ item.size_gb }}G)"
+
+- name: Start this VM
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    node: "{{ vm_provision_node }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    state: started
+    timeout: "{{ vm_provision_boot_timeout }}"
+
+# Waits for SSH on the guest rather than for the QEMU guest agent, and runs
+# from the Proxmox host because that is where this play already is — the host
+# is the lab subnet's gateway, so it can always reach a lab guest, whereas the
+# control node cannot until the Tailscale subnet route in docs/06-out-of-band.md
+# is advertised and approved.
+#
+# SSH answering is the stronger readiness signal of the two: it proves the
+# guest booted, cloud-init applied the static address, and the injected key's
+# sshd is serving — which is precisely the state guest_base needs next. A
+# guest-agent ping proves only that the agent started. The agent is still
+# enabled at template level (it is what makes `qm guest exec` and clean
+# shutdowns work), just not used as the gate here.
+- name: Wait for the guest to finish cloud-init and accept SSH
+  ansible.builtin.wait_for:
+    host: "{{ vm_provision_ip }}"
+    port: 22
+    state: started
+    delay: 5
+    timeout: "{{ vm_provision_boot_timeout }}"
+
+# Skipped under --check, along with the snapshot below, because both sit
+# downstream of a clone that cannot have happened: proxmox_kvm declares
+# supports_check_mode=False, so Ansible skips it entirely in a dry run and the
+# VM these two would read does not exist yet. Without this guard a `make check`
+# against a not-yet-provisioned lab fails on "VM with vmid 111 does not exist
+# in cluster" — a confusing way to report "this is a dry run".
+#
+# Deliberately NOT wrapped in `failed_when: false`: by this point in a real run
+# the VM has been cloned, started, and has answered on SSH, so a failure to
+# read its snapshots is a genuine API problem and should be loud rather than
+# silently turning into a skipped snapshot.
+- name: Read this VM's existing snapshots
+  community.proxmox.proxmox_snap_info:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+  register: vm_provision_snaps
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+# Taken once and never refreshed: `clean` means "as this VM was the moment it
+# first came up", so re-taking it on a later run would quietly redefine the
+# state a lab expects to reset to. proxmox_snap is idempotent on its own
+# (it exits changed=false when the name is present), but the explicit check
+# makes the intent visible rather than relying on that.
+#
+# Disk-only (vmstate: false): the RAM image would add the VM's full memory to
+# the thin pool per snapshot, and rolling a lab back to a stopped VM that then
+# boots clean is the wanted behaviour anyway.
+- name: Take the pristine post-cloud-init snapshot
+  community.proxmox.proxmox_snap:
+    api_host: "{{ vm_provision_api_host }}"
+    api_user: "{{ vm_provision_api_user }}"
+    api_token_id: "{{ vm_provision_api_token_id }}"
+    api_token_secret: "{{ vm_provision_api_token_secret }}"
+    validate_certs: "{{ vm_provision_api_validate_certs }}"
+    vmid: "{{ vm_provision_spec.vmid }}"
+    snapname: "{{ vm_provision_snapshot_name }}"
+    description: "{{ vm_provision_snapshot_description }}"
+    vmstate: false
+    timeout: "{{ vm_provision_boot_timeout }}"
+    state: present
+  when:
+    - not ansible_check_mode
+    - >-
+      vm_provision_snapshot_name not in
+      (vm_provision_snaps.snapshots | default([]) | map(attribute='name') | list)
+
+- name: Report the provisioned VM
+  ansible.builtin.debug:
+    msg: >-
+      {{ vm_provision_name }} (vmid {{ vm_provision_spec.vmid }}) is up at
+      {{ vm_provision_ip }} — {{ vm_provision_spec.cores }} vCPU,
+      {{ vm_provision_spec.memory }} MB RAM,
+      {{ vm_provision_spec.disk_gb }} GB boot disk,
+      {{ vm_provision_spec.extra_disks | default([]) | length }} extra disk(s),
+      snapshot '{{ vm_provision_snapshot_name }}' in place.
+      Configure it with playbooks/configure_guests.yml.
