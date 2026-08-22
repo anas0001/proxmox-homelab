@@ -25,6 +25,15 @@ guest_admin_ssh_key: "{{ vault_guest_admin_ssh_pubkey }}"   # PUBLIC key only
 lab_nat_subnet: "10.10.10.0/24"
 lab_nat_gateway: "10.10.10.1"
 lab_domain: "homelab.local"
+# The isolated lab bridge. Defined here rather than only in
+# roles/pve_network/defaults/main.yml because TWO roles in DIFFERENT plays
+# need it: pve_network builds the bridge (pve_bootstrap.yml) and pve_security
+# writes a firewall rule scoped to it (pve_harden.yml, which loads only
+# pve_security). A role default is in scope solely for tasks running inside
+# that role, so pve_security referencing pve_network_lab_bridge would fail
+# with "'pve_network_lab_bridge' is undefined" — the same trap already
+# documented for pve_base_proxmoxer_venv below.
+lab_bridge: vmbr1
 
 # ── Python venv for community.proxmox ────────────────────────────────
 # Defined here (group_vars/all), not inside roles/pve_base/defaults/main.yml,

@@ -26,6 +26,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   VM in the `labs` pool whose name matches the catalogue entry before anything is deleted.
 
 ### Fixed
+- `pve_security`: lab guests could route out but not resolve names, so every package install
+  hung rather than failed. dnsmasq runs on the host and is the lab's resolver, but the host
+  firewall's default-DROP inbound policy had no rule for the lab subnet. Traffic *forwarded
+  through* the host uses a different chain and was unaffected, which is what made this look like
+  anything but a firewall problem — verified on a real guest: HTTPS to a mirror by IP literal
+  returned `HTTP 302` while `getent hosts` failed and `dnf -y install tree` exited 124. Now
+  allows 53/udp, 53/tcp and 67/udp from the lab subnet, restricted by both source subnet and
+  inbound interface so a spoofed lab source arriving on the management bridge does not match.
+  DNS over TCP is included deliberately: resolvers fall back to it for responses too large for
+  UDP, so a UDP-only rule yields rare, hard-to-diagnose failures instead of none.
+- `pve_security`: `--check` runs of the firewall tasks failed outright with "object of type
+  'dict' has no attribute 'checksum'". Under check mode `template` does not write its staging
+  file and returns no `checksum`, which the copy tasks' conditions dereferenced unguarded —
+  making `make check` unusable for this role. The comparisons now default the staged checksum,
+  so a dry run reports "would copy" rather than erroring.
+- The lab bridge name is now single-sourced as `lab_bridge` in `group_vars/all`, because
+  `pve_harden.yml` loads only `pve_security` and a `pve_network` role default is out of scope
+  there — the same trap already documented for `pve_base_proxmoxer_venv`.
 - `vm_template`: every clone of the golden template panicked before init and no lab VM could
   boot. Proxmox's default CPU model (`kvm64`) does not provide the **x86-64-v2** baseline that
   Rocky 9 — and every EL9 distribution — requires, so glibc aborted immediately: `Fatal glibc

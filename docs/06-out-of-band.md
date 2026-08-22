@@ -207,6 +207,31 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-22 — host.fw backed up by hand, and a test package installed in a lab guest, while fixing lab DNS
+
+Before changing the host firewall over the SSH connection that firewall governs, the live rules
+were copied aside so a bad rule could be reverted without console access:
+
+```bash
+cp /etc/pve/nodes/pve/host.fw /root/host.fw.bak-$(date +%Y%m%d-%H%M%S)
+```
+
+The change applied cleanly (`pve-firewall status` → `Status: enabled/running`, and the new rules
+appear in `pve-firewall compile` above the `DROP`), so the backup was removed afterwards. The
+rules themselves are codified in `pve_security`, not applied by hand.
+
+To prove the fix actually worked rather than trusting the compiled chain, a package was installed
+in lab guest `node1` and then removed:
+
+```bash
+sudo dnf -y install tree     # exit 0 after the fix; exit 124 (hung) before it
+sudo dnf -y remove tree
+```
+
+**Net state:** the backup file is gone, `tree` is not installed, and `node1` is back to what it
+was apart from dnf's metadata cache. `node1` carries a `clean` snapshot predating both, so any
+residue can be rolled back at will.
+
 ### 2026-08-22 — probe VMs and guest-disk inspection while diagnosing why no cloned VM would boot
 
 `vm_provision`'s first real run provisioned `node1` correctly and then failed, as designed, on

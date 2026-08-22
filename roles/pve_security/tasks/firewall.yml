@@ -104,13 +104,22 @@
       changed_when: false
       check_mode: false
 
+    # `| default('')` on the staged checksum is a check-mode guard, not
+    # defensive noise: under --check the template task above does not actually
+    # write the staging file, so its result carries no `checksum` key at all
+    # and this condition failed outright with "object of type 'dict' has no
+    # attribute 'checksum'" — making `make check` unusable for this role.
+    # Defaulting to '' can never equal a real checksum, so a --check run
+    # reports "would copy", which is the honest answer when the comparison
+    # genuinely cannot be made. A real run is unaffected.
     - name: Copy the host firewall into place if it differs
       ansible.builtin.command: >-
         cp /tmp/pve_security_host.fw.staged
         {{ pve_security_node_link.stat.lnk_source }}/host.fw
       when: >-
         not pve_security_hostfw_live.stat.exists
-        or pve_security_hostfw_live.stat.checksum != pve_security_hostfw_staged.checksum
+        or pve_security_hostfw_live.stat.checksum
+           != (pve_security_hostfw_staged.checksum | default(''))
       changed_when: true
       register: pve_security_hostfw
 
@@ -137,7 +146,8 @@
       ansible.builtin.command: cp /tmp/pve_security_cluster.fw.staged /etc/pve/firewall/cluster.fw
       when: >-
         not pve_security_clusterfw_live.stat.exists
-        or pve_security_clusterfw_live.stat.checksum != pve_security_clusterfw_staged.checksum
+        or pve_security_clusterfw_live.stat.checksum
+           != (pve_security_clusterfw_staged.checksum | default(''))
       changed_when: true
       register: pve_security_clusterfw
 
@@ -175,7 +185,8 @@
       ansible.builtin.command: cp /tmp/pve_security_cluster.fw.staged /etc/pve/firewall/cluster.fw
       when: >-
         not pve_security_clusterfw_enabled_live.stat.exists
-        or pve_security_clusterfw_enabled_live.stat.checksum != pve_security_clusterfw_enabled_staged.checksum
+        or pve_security_clusterfw_enabled_live.stat.checksum
+           != (pve_security_clusterfw_enabled_staged.checksum | default(''))
       changed_when: true
       register: pve_security_clusterfw_enabled
       notify: Restart pve-firewall

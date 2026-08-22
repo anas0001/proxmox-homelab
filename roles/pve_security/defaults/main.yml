@@ -65,6 +65,38 @@ pve_security_firewall_ports:
   - "{{ pve_security_ssh_port }}"
   - 8006
 
+# Lab guests resolve names against dnsmasq on the host — pve_network binds it
+# to the lab bridge and hands guests the host's lab address as their
+# nameserver. The default-DROP inbound policy above silently blackholes that,
+# and the failure is genuinely confusing rather than obviously a firewall
+# problem: traffic ROUTED THROUGH the host is unaffected (FORWARD is a
+# different chain), so a guest pings 8.8.8.8 happily, reaches any HTTPS host by
+# IP literal, and then hangs forever on `dnf install` because it cannot resolve
+# a single name. Confirmed live on node1 before this rule existed: raw egress
+# HTTP 302, `getent hosts` failed, `dnf -y install tree` exited 124 (timeout).
+#
+# Scoped two ways rather than one: source-restricted to the lab subnet AND
+# interface-restricted to the lab bridge, so a packet claiming a 10.10.10.0/24
+# source arriving on the management bridge does not match. `iface` is a
+# documented rule property (`man pve-firewall`, --iface), spelled `-i` in the
+# .fw file format.
+#
+# This does NOT expose the resolver to the LAN or the tailnet — only to the
+# isolated lab network that already depends on it.
+pve_security_allow_lab_services: true
+pve_security_lab_subnet: "{{ lab_nat_subnet }}"
+pve_security_lab_bridge: "{{ lab_bridge }}"
+# DNS over TCP is not optional-in-practice: resolvers fall back to it for
+# responses too large for UDP (DNSSEC, big RRsets), so allowing only UDP/53
+# produces rare, hard-to-diagnose failures rather than none. DHCP is allowed
+# because pve_network runs a lease pool on this subnet even though vm_provision
+# assigns static addresses below it — a guest booted by hand, or any future
+# DHCP guest, would otherwise fail silently.
+pve_security_lab_service_rules:
+  - {proto: udp, dport: 53, comment: "DNS (dnsmasq on the lab bridge)"}
+  - {proto: tcp, dport: 53, comment: "DNS over TCP - large/DNSSEC responses"}
+  - {proto: udp, dport: 67, comment: "DHCP requests from lab guests"}
+
 # ── fail2ban ─────────────────────────────────────────────────────────────
 pve_security_enable_fail2ban: true
 pve_security_fail2ban_maxretry: 5

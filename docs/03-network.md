@@ -58,3 +58,21 @@ it, so the tailnet policy is load-bearing here rather than decorative. See
 - Allow `22`/`8006` from the Tailscale interface (`tailscale0` / `100.64.0.0/10`) only (plus the
   local mgmt subnet if you want direct console access).
 - Lab networks may reach the internet (egress) but not the management interface.
+- Allow the lab subnet to reach **DNS (53/udp+tcp) and DHCP (67/udp) on the host itself**,
+  scoped to both the lab subnet as source and the lab bridge as inbound interface.
+
+### Why that last rule is not optional
+
+`pve_network` runs dnsmasq on the host and hands lab guests the host's lab address as their
+resolver. The default-DROP inbound policy blocks that, and the resulting failure is deceptive
+rather than obvious: traffic *routed through* the host is a different chain and is unaffected, so
+a guest pings `8.8.8.8` happily and reaches any host by IP literal — while every name lookup
+times out and `dnf install` hangs indefinitely instead of failing.
+
+Observed on a real guest before the rule existed: raw HTTPS to a mirror by IP returned `HTTP 302`,
+`getent hosts` failed, and `dnf -y install tree` exited 124 (timeout). With the rule, the same
+guest resolves and installs normally.
+
+The rule restricts by source subnet **and** inbound interface, so a packet claiming a lab source
+arriving on the management bridge does not match. The resolver is never exposed to the home LAN
+or the tailnet.
