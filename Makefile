@@ -14,9 +14,14 @@ BIN := $(shell [ -x .venv/bin/ansible ] && echo .venv/bin/)
 #   TAGS=access  make bootstrap     scope the run to one role
 #   CHECK=1      make bootstrap     dry run with a diff, changing nothing
 # Both compose:  CHECK=1 TAGS=access make bootstrap
+#   LIMIT=linux_lab make configure   scope the run to some hosts
+# Guests are provisioned per phase (vm_provision_build), so `make configure`
+# against the whole `guests` group will report UNREACHABLE for every VM that
+# has not been built yet. LIMIT is how you scope to the ones that exist.
 TAGFLAG   := $(if $(TAGS),--tags $(TAGS),)
 CHECKFLAG := $(if $(CHECK),--check --diff,)
-PLAYFLAGS := $(TAGFLAG) $(CHECKFLAG)
+LIMITFLAG := $(if $(LIMIT),--limit $(LIMIT),)
+PLAYFLAGS := $(TAGFLAG) $(CHECKFLAG) $(LIMITFLAG)
 
 VAULT_PASS := $(wildcard .vault_pass)
 ifneq ($(VAULT_PASS),)

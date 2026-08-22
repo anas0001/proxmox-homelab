@@ -1,0 +1,21 @@
+---
+# Base package set. Wrapped in a tagged block rather than relying on the tag of
+# the `include_tasks` that pulls this file in: tags on a dynamic include do not
+# propagate to the tasks inside it, so `--tags packages` would match the include
+# and then run nothing.
+
+- name: Base packages
+  tags: [packages]
+  block:
+    # Retried because this project's link to the host has shown real
+    # instability throughout its life (a mid-run SSH timeout has already cost
+    # one full template build), and a transient mirror failure should not fail
+    # an otherwise-good run across a dozen guests.
+    - name: Install the base package set
+      ansible.builtin.package:
+        name: "{{ guest_base_packages }}"
+        state: present
+      register: guest_base_pkg_install
+      until: guest_base_pkg_install is succeeded
+      retries: 2
+      delay: 5

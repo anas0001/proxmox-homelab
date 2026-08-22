@@ -1,0 +1,8 @@
+// {{ ansible_managed }}
+//
+// Debian-family unattended security updates. UNVERIFIED against a real guest:
+// no Ubuntu template exists in this project yet (vm_template_images carries
+// rocky9 only). Written from the package's own documentation.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

@@ -1,2 +1,70 @@
 ---
-# Overridable defaults for guest_base. Every variable here is documented.
+# Baseline every lab guest gets, applied over SSH once vm_provision has made it
+# reachable. Deliberately small: this is the floor common to every lab, not a
+# place for per-lab software. Ceph, HPC and networking specifics belong in
+# their own roles layered on top.
+#
+# Convergent and safe to re-run. Where cloud-init already did the right thing
+# (created the admin user, installed its key, turned password auth off), this
+# role asserts and converges rather than redoing the work — see tasks/ssh.yml.
+
+# ── Packages ─────────────────────────────────────────────────────────────
+# The floor for working in a lab guest at all. Verified against a fresh Rocky
+# 9 cloud image: only `curl` is present out of the box, so this genuinely
+# installs rather than no-ops.
+guest_base_packages:
+  - vim
+  - git
+  - tmux
+  - curl
+  - chrony
+
+# ── Time ─────────────────────────────────────────────────────────────────
+# UTC everywhere, deliberately: correlating logs across the host and a dozen
+# guests is miserable when they disagree about what time it is, and a lab
+# that spans timezones has no upside. chrony is already installed and running
+# on Rocky's cloud image; this role makes that a guarantee rather than an
+# accident of the image.
+guest_base_timezone: "UTC"
+
+# ── SSH ──────────────────────────────────────────────────────────────────
+# Cloud-init already sets PasswordAuthentication no on Rocky's image; this
+# pins it so a later image change, or someone editing a guest by hand, does
+# not quietly re-open it.
+guest_base_ssh_password_auth: false
+# Root SSH is refused outright. Rocky's cloud image ships
+# `PermitRootLogin without-password`, which still permits key-based root
+# login; svc_admin has passwordless sudo, so nothing needs it.
+guest_base_ssh_permit_root_login: false
+
+# ── Firewall ─────────────────────────────────────────────────────────────
+# Default-deny inbound with SSH allowed, matching the host's posture. The lab
+# network is isolated, but "isolated" is exactly the assumption the networking
+# labs exist to break — a guest that only listens on what it should is a guest
+# whose neighbours cannot surprise it.
+#
+# firewalld on BOTH distribution families rather than firewalld-on-Rocky and
+# ufw-on-Ubuntu. One firewall abstraction means one set of tasks, one mental
+# model and one thing to debug; Ubuntu packages firewalld perfectly well, and
+# ufw's only real advantage is a friendlier CLI that Ansible does not use.
+guest_base_enable_firewall: true
+# Baseline services allowed inbound. Per-lab roles open their own ports; this
+# is only what every guest needs to stay reachable.
+guest_base_firewall_services:
+  - ssh
+guest_base_firewall_zone: public
+
+# ── Unattended security updates ──────────────────────────────────────────
+# Security patches only, applied automatically. Lab guests are rebuilt often
+# and are not production, but an unpatched box that lives for months between
+# rebuilds is still an unpatched box.
+#
+# Deliberately NOT full unattended upgrades: a lab exists to be a known
+# quantity, and having a kernel or Ceph version change under you between two
+# runs of the same experiment makes results unreproducible. Security-only is
+# the compromise.
+guest_base_enable_auto_updates: true
+# No automatic reboots. A guest rebooting mid-experiment is worse than a guest
+# waiting for a kernel patch to take effect at the next manual reboot — and
+# `vm_provision` can roll every guest back to `clean` at any time anyway.
+guest_base_auto_reboot: false

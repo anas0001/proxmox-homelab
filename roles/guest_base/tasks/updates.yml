@@ -1,0 +1,94 @@
+---
+# Unattended SECURITY updates only.
+#
+# The two families do this so differently that a shared abstraction would be
+# more confusing than the branch: dnf-automatic is configured through an ini
+# file and driven by a systemd timer, unattended-upgrades through APT
+# configuration fragments. The variables in vars/<family>.yml cover the names;
+# the mechanism genuinely differs.
+
+- name: Unattended security updates
+  tags: [updates]
+  block:
+    - name: Install the unattended-update package
+      ansible.builtin.package:
+        name: "{{ guest_base_auto_update_package }}"
+        state: present
+      register: guest_base_upd_install
+      until: guest_base_upd_install is succeeded
+      retries: 2
+      delay: 5
+
+    # ── RedHat family ────────────────────────────────────────────────────
+    # Edited key-by-key with ini_file rather than templated wholesale:
+    # /etc/dnf/automatic.conf carries a good deal more than these two settings
+    # (emitters, email config, reboot behaviour) and replacing the file would
+    # silently discard whatever a future package version adds to it.
+    - name: Configure dnf-automatic for security updates only
+      community.general.ini_file:
+        path: /etc/dnf/automatic.conf
+        section: commands
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+        no_extra_spaces: true
+      loop:
+        - {option: upgrade_type, value: security}
+        - {option: apply_updates, value: "yes"}
+        # Explicitly off rather than left to the package default: a guest that
+        # reboots itself mid-experiment is worse than one waiting for a manual
+        # reboot to pick up a kernel patch.
+        - {option: reboot, value: "{{ 'when-needed' if guest_base_auto_reboot else 'never' }}"}
+      loop_control:
+        label: "{{ item.option }} = {{ item.value }}"
+      when: ansible_facts['os_family'] == 'RedHat'
+      notify: Restart auto-update timer
+
+    # ── Debian family ────────────────────────────────────────────────────
+    # UNVERIFIED against a real guest — no Ubuntu template exists yet. See the
+    # note in vars/Debian.yml.
+    - name: Configure unattended-upgrades for security updates only
+      ansible.builtin.template:
+        src: 20auto-upgrades.j2
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # Gated for the same reason as the firewalld tasks: the unit does not exist
+    # until the package above is actually installed, so in --check on a guest
+    # that has never run this role the task fails with "Could not find the
+    # requested service dnf-automatic.timer". Conditioned on that exact case
+    # rather than on check mode alone, so a dry run against an already-
+    # configured guest still previews it.
+    - name: Ensure the unattended-update service is enabled and running
+      ansible.builtin.service:
+        name: "{{ guest_base_auto_update_service }}"
+        state: started
+        enabled: true
+      when: not (ansible_check_mode and guest_base_upd_install is changed)
+
+    # Confirms the timer is genuinely scheduled rather than merely installed.
+    # A timer that exists but was never enabled applies exactly nothing while
+    # looking, in a play recap, like a configured feature.
+    #
+    # systemd_service rather than service_facts: service_facts does not report
+    # .timer units, so it returned "unknown" for a timer that was in fact
+    # enabled and active — a reporting bug that would have quietly undermined
+    # the one task whose entire job is confirming this got switched on.
+    # Queried with no state change; it reports without touching the unit.
+    - name: Read the unattended-update unit's real state
+      ansible.builtin.systemd_service:
+        name: "{{ guest_base_auto_update_service }}"
+      register: guest_base_upd_unit
+      when: not (ansible_check_mode and guest_base_upd_install is changed)
+
+    - name: Report the unattended-update state
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ guest_base_auto_update_service }} is
+          {{ guest_base_upd_unit.status.UnitFileState | default('unknown') }} /
+          {{ guest_base_upd_unit.status.ActiveState | default('unknown') }} —
+          security updates only, automatic reboot
+          {{ 'enabled' if guest_base_auto_reboot else 'disabled' }}
