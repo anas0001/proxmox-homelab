@@ -23,10 +23,35 @@
 # vmid exists — confirmed directly against the module's source (its own
 # vmid parameter doc, verbatim: "If VM with the specified vmid does not
 # exist in a cluster then resulting list will be empty"), not assumed.
+#
+# Checks `template: true` specifically, NOT merely "a VM exists at this
+# vmid". A VM can exist at this vmid without the build having finished — a
+# real case, not hypothetical: hit live when an earlier run failed on the
+# "Attach a cloud-init drive" task after the shell and disk-import steps had
+# already succeeded. Treating "exists" as "done" would have made every
+# future run silently skip a template that was never actually finished,
+# forever.
 - name: Note whether the template is already built
   ansible.builtin.set_fact:
     vm_template_already_exists: >-
-      {{ (vm_template_existing_raw.proxmox_vms | default([]) | length) > 0 }}
+      {{ (vm_template_existing_raw.proxmox_vms
+          | default([]) | selectattr('template', 'true') | list | length) > 0 }}
+    vm_template_partial_vm_exists: >-
+      {{ (vm_template_existing_raw.proxmox_vms
+          | default([]) | rejectattr('template', 'true') | list | length) > 0 }}
+
+- name: Fail with a clear message when a non-template VM already occupies this vmid
+  ansible.builtin.fail:
+    msg: >-
+      A VM already exists at vmid {{ vm_template_spec.vmid }} but is not a
+      template — most likely a previous build of {{ vm_template_spec.name }}
+      that failed partway through. This role will not delete or recreate it
+      automatically: confirm what state it is in, then either remove it
+      (`qm destroy {{ vm_template_spec.vmid }}`) so this role can rebuild it
+      cleanly, or finish it by hand and set it as a template
+      (`qm template {{ vm_template_spec.vmid }}`) so this role recognises it
+      as complete.
+  when: vm_template_partial_vm_exists
 
 # Everything else in this file's build runs inside one block guarded by
 # `when: not vm_template_already_exists`, rather than `meta: end_task` (not a
@@ -148,6 +173,19 @@
               | default([], true) | first | default(0)) | int }}
       when: vm_template_current_disk_gb < (vm_template_spec.disk_gb | int)
 
+    # `update: true` alone explicitly disables updates to ide/net/virtio/
+    # sata/scsi as a safety feature (proxmox_kvm's own docs: "Because of the
+    # operations of the API and security reasons, I have disabled the update
+    # of the following parameters..."), which is exactly the ide2 attach
+    # this task needs. Confirmed live: with only `update: true`, this task
+    # failed with "Unable to update vm None with vmid 9000: 'ide2'" — the
+    # module silently refusing the ide key rather than a clean rejection.
+    # `update_unsafe: true` is the module's own documented opt-in for this.
+    # Its warning ("improper configuration might result in permanent loss of
+    # data, for example disk recreated") is about scsi/virtio disk
+    # reassignment; this call only ever sets ide2 to a NEW cloud-init drive
+    # and never touches scsi0 in the same call, so the risk that warning
+    # describes does not apply to what this task actually does.
     - name: Attach a cloud-init drive and set boot order
       community.proxmox.proxmox_kvm:
         api_host: "{{ vm_template_api_host }}"
@@ -161,8 +199,17 @@
           ide2: "{{ vm_template_iso_storage }}:cloudinit"
         boot: "order=scsi0"
         update: true
+        update_unsafe: true
         state: present
 
+    # `update: true` is required here too, not just on the ide2 attach —
+    # confirmed live: without it, `state: present` against an already-
+    # existing VM reports "VM with vmid <9000> already exists" and applies
+    # nothing, `changed: false`, and the VM is genuinely never converted
+    # (confirmed separately with `qm config 9000 | grep template`, empty).
+    # `update_unsafe` is NOT needed here: `template` is not in
+    # proxmox_kvm's disabled-parameters list under plain `update: true`
+    # (only net/virtio/virtiofs/ide/sata/scsi/efidisk0/tpmstate0 are).
     - name: Convert the VM into a template
       community.proxmox.proxmox_kvm:
         api_host: "{{ vm_template_api_host }}"
@@ -173,6 +220,7 @@
         node: "{{ vm_template_node }}"
         vmid: "{{ vm_template_spec.vmid }}"
         template: true
+        update: true
         state: present
       register: vm_template_result
 
