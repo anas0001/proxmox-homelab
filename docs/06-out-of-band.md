@@ -115,21 +115,30 @@ refused, `svc_admin` working — after a `systemctl reload ssh` was needed by ha
 
 ### 4. Tailscale subnet router for the lab network — *pending, not yet run*
 
-**Why it is needed.** The control node runs on a workstation, not on the Proxmox host, because
-the labs require SSH, VNC and XRDP access to the guests from the desk. Lab guests sit on an
-isolated network that is reachable only from the host, so without a route they are unreachable
-from anywhere else — which makes both Ansible and interactive access impossible.
+**Why it is needed.** The labs require VNC and XRDP access to the guests from the desk, and
+those need a real route. Lab guests sit on an isolated network reachable only from the host.
 
-Advertising the lab subnet over the tailnet solves both at once, with no port forwards and no
-guest exposed to the home LAN.
+**SSH and Ansible do NOT need this.** They already work by jumping through the host — see
+`inventories/homelab/group_vars/guests/main.yml` and `docs/01-control-node.md`. This entry is
+only about giving the workstation an actual route, for the things a jump cannot carry: `ping`,
+VNC, XRDP, and any other non-SSH protocol.
 
-**Why not Ansible.** Same reason as entry 2: `tailscale up` re-authenticates and drops the
-tunnel Ansible connects over.
+**Use `tailscale set`, not `tailscale up`.** An earlier version of this entry called for
+`tailscale up --advertise-routes=...` and warned that it drops the tunnel. That warning is
+correct about `up` — it re-authenticates — but `up` is not the right command here.
+`tailscale set` changes preferences in place on an already-authenticated node, with no
+re-authentication and no tunnel drop. Confirmed available on this host (`tailscale version`
+1.102.2; `tailscale set --help` lists `--advertise-routes`).
 
 ```bash
-# On the Proxmox host. Have console access available — this drops the tunnel.
-tailscale up --advertise-routes=10.10.10.0/24
+# On the Proxmox host. Changes prefs in place — does NOT re-authenticate.
+tailscale set --advertise-routes=10.10.10.0/24
 ```
+
+Still worth having console access to hand the first time, and still worth recording here before
+running: this is a change to how the host is reachable, and being wrong about that is expensive.
+`tailscale up` remains the correct command for initial enrolment (entry 2), where the re-auth is
+the entire point.
 
 Then, in the Tailscale admin console, **approve the advertised route** (Machines -> the host ->
 Route settings). Advertising alone does nothing until the route is approved.

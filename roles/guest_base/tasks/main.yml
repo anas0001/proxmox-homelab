@@ -1,2 +1,77 @@
 ---
-# tasks file for guest_base
+# Baseline for every lab guest. Runs over SSH against a guest vm_provision has
+# already created, addressed and booted.
+#
+# Ordering is not arbitrary. Packages first (chrony and firewalld have to exist
+# before anything configures them), then time, then SSH, then the firewall, and
+# automatic updates last. The firewall is deliberately NOT first: it is the one
+# step that can cut the connection this role is running over, so it happens
+# after everything that would be annoying to redo, and after SSH is known-good.
+#
+# On losing access: these guests have NO usable console. vm_provision injects an
+# SSH key and cloud-init leaves both svc_admin and root with locked passwords,
+# so a Proxmox console session cannot log in. That is a deliberate posture, not
+# an oversight, and it means the recovery path for a mistake here is rolling
+# back to the `clean` snapshot vm_provision took — which is exactly what that
+# snapshot is for. It also means the sshd and firewall tasks below validate
+# before they apply rather than after.
+
+# Ansible's implicit "Gathering Facts" step inherits the PLAY's tags, which in
+# configure_guests.yml are [configure]. A tag-scoped run such as
+# `--tags time` therefore matches tasks inside this role but NOT the fact
+# gathering they depend on, and the very next task dies with the memorably
+# unhelpful "object of type 'dict' has no attribute 'os_family'".
+#
+# Hit for real running `--tags time`, and the same trap pve_security's
+# firewall.yml already documents from the other direction (it sidesteps facts
+# entirely by stat-ing /etc/pve/local). This role genuinely needs os_family, so
+# it gathers them itself when they are missing — tagged `always` so it survives
+# any scoping, and conditional so a normal run does not gather twice.
+- name: Gather facts if a tag-scoped run skipped the implicit gathering
+  ansible.builtin.setup:
+  when: ansible_facts['os_family'] is not defined
+  tags: [always]
+
+- name: Load distribution-specific package and service names
+  ansible.builtin.include_vars: "{{ ansible_facts['os_family'] }}.yml"
+  tags: [always]
+
+# Fails clearly on an unsupported distribution rather than later, deep inside a
+# package task, with a confusing "no such package" error. `os_family` groups
+# Rocky/Alma/RHEL under RedHat and Ubuntu/Debian under Debian, which is exactly
+# the granularity the vars/ files are split on.
+- name: Fail early on an unsupported distribution
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in ['RedHat', 'Debian']
+    fail_msg: >-
+      guest_base supports the RedHat and Debian families;
+      {{ ansible_facts['distribution'] }} reports os_family
+      '{{ ansible_facts['os_family'] }}'. Add a vars/{{ ansible_facts['os_family'] }}.yml
+      with the right service and package names before running this against it.
+    success_msg: >-
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+      ({{ ansible_facts['os_family'] }} family)
+  tags: [always]
+
+- name: Install the base package set
+  ansible.builtin.include_tasks: packages.yml
+  tags: [packages]
+
+- name: Configure time synchronisation and timezone
+  ansible.builtin.include_tasks: time.yml
+  tags: [time]
+
+- name: Harden SSH
+  ansible.builtin.include_tasks: ssh.yml
+  tags: [ssh]
+
+- name: Configure the guest firewall
+  ansible.builtin.include_tasks: firewall.yml
+  tags: [firewall]
+  when: guest_base_enable_firewall | bool
+
+- name: Configure unattended security updates
+  ansible.builtin.include_tasks: updates.yml
+  tags: [updates]
+  when: guest_base_enable_auto_updates | bool

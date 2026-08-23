@@ -7,6 +7,34 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- `guest_base` role: the baseline every lab guest gets over SSH once `vm_provision` has booted it
+  — base packages, timezone and time sync, SSH hardening, a default-deny host firewall, and
+  unattended **security** updates (not full upgrades: a lab whose kernel changes under you between
+  two runs of the same experiment is not reproducible). Distribution-aware through
+  `vars/RedHat.yml` and `vars/Debian.yml`, since `sshd`/`ssh` and `chronyd`/`chrony` are the usual
+  way such a role works on one family and silently breaks on the other.
+
+  Shaped throughout by the fact that these guests have **no console fallback**: cloud-init leaves
+  both `svc_admin` and `root` with locked passwords, so a Proxmox console cannot log in and a
+  mistake means rolling back to the `clean` snapshot. The firewall therefore runs last; the sshd
+  drop-in is validated with `sshd -t -f %s` before it is ever written; the handler reloads rather
+  than restarts so Ansible's own session survives; handlers are flushed immediately rather than at
+  end-of-play so a later failure cannot leave hardening on disk that the daemon never read; and
+  both the SSH and firewall steps assert the resulting live state rather than trusting a
+  `changed: true`.
+
+  Firewall ordering is deliberate: install firewalld, write the SSH allow into permanent config
+  while the daemon is still stopped (`offline: true`), and only then start it. Starting first
+  happens to work because RHEL's default `public` zone already contains `ssh`, but "happens to" is
+  doing too much work in a sentence about whether the box stays reachable.
+
+  Verified live on node1 and node2: `permitrootlogin` moved from the image's `without-password` to
+  `no`, `passwordauthentication no` pinned, firewalld active with `ssh` permitted, and
+  `dnf-automatic.timer` enabled/active with `upgrade_type=security` and `reboot=never`. A second
+  run reports `changed=0` on both.
+- `make` now takes `LIMIT=` alongside `TAGS=` and `CHECK=`. Guests are provisioned per phase, so a
+  `make configure` against the whole `guests` group reports UNREACHABLE for every VM not yet
+  built; `LIMIT=linux_lab make configure` scopes it to the ones that exist.
 - `vm_provision` role: clones the golden templates into running lab VMs — clone, cloud-init
   identity and static addressing, disk sizing, extra lab disks, boot, readiness gate, `clean`
   snapshot — plus a guarded teardown path. Cloning is deliberately two tasks: `proxmox_kvm`
@@ -25,7 +53,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `vm_provision_allow_destroy=true`, and each VM must independently prove it is a non-template
   VM in the `labs` pool whose name matches the catalogue entry before anything is deleted.
 
+### Changed
+- Timezone is now `Europe/London` for the Proxmox host and every lab guest, present and future,
+  single-sourced as `lab_timezone` in `group_vars/all` so the two cannot drift. A tzdata zone name
+  rather than a fixed offset, so guests follow the GMT/BST transition on their own — verified
+  against the zone's real rules (GMT in January, BST on 2026-08-23, back to GMT on 2026-10-25).
+  Applied live: host and both guests now report `BST +0100` and agree on the time.
+
+  Note the trade this accepts. UTC everywhere makes cross-machine log correlation trivial and has
+  no ambiguous timestamps; `Europe/London` reintroduces one genuinely ambiguous hour each autumn
+  when 01:00–02:00 local happens twice. That cost is documented at `lab_timezone`, which is the
+  single line to change if log correlation ever matters more than wall-clock convenience.
+- `pve_base` now manages the host timezone at all, which it previously did not. The host already
+  happened to be on `Europe/London`, but nothing in the repository set it, so a rebuild would have
+  silently come back as UTC.
+
 ### Fixed
+- `guest_base` was unusable with `--tags`: every scoped run failed with `object of type 'dict' has
+  no attribute 'os_family'`, or silently ran nothing. Two independent causes, both found by
+  actually running `--tags time` rather than by reading the code. Ansible's implicit fact-gathering
+  step inherits the *play's* tags (`configure`), so a `--tags time` run skipped it and left
+  `os_family` undefined; and the `include_tasks` statements carried no tags of their own, so the
+  tag never selected the include and the tagged blocks inside it were never reached. The role now
+  gathers facts itself when they are missing, and tags both the include and the inner block —
+  scoping needs both, and missing either fails differently. All five tags verified working and
+  idempotent against a real guest.
 - `pve_security`: lab guests could route out but not resolve names, so every package install
   hung rather than failed. dnsmasq runs on the host and is the lab's resolver, but the host
   firewall's default-DROP inbound policy had no rule for the lab subnet. Traffic *forwarded

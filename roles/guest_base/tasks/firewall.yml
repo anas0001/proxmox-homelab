@@ -1,0 +1,108 @@
+---
+# Default-deny inbound on the guest, with SSH allowed.
+#
+# This is the one task file in this role that can sever the connection it runs
+# over, and these guests have no usable console (locked passwords), so the
+# ordering below is the whole point:
+#
+#   1. install firewalld, but do NOT start it
+#   2. write the SSH allow into the PERMANENT config while the daemon is still
+#      stopped, using `offline: true`
+#   3. only then start and enable it
+#
+# Starting first and allowing SSH second would work in practice — RHEL's
+# default `public` zone happens to include the ssh service — but "happens to"
+# is doing far too much work in a sentence about whether the box stays
+# reachable. Doing it in this order means the rule is already on disk before
+# anything is enforcing anything, so it does not matter what the shipped
+# default zone contains.
+
+- name: Guest firewall
+  tags: [firewall]
+  block:
+    - name: Install the firewall package
+      ansible.builtin.package:
+        name: "{{ guest_base_firewall_package }}"
+        state: present
+      register: guest_base_fw_install
+      until: guest_base_fw_install is succeeded
+      retries: 2
+      delay: 5
+
+    # Everything below needs the `firewall` Python bindings that ship WITH the
+    # firewalld package (python3-firewall), so none of it can run before that
+    # install has actually happened. In a real run it has. In --check it has
+    # not, and the module fails with "Failed to import the required Python
+    # library (firewall)".
+    #
+    # Gated on precisely that case rather than on check mode alone, so a dry
+    # run against an ALREADY-configured guest — where firewalld is present and
+    # the install reports no change — still previews the firewall tasks
+    # properly instead of silently skipping the most dangerous part of this
+    # role.
+    - name: Configure firewalld
+      when: not (ansible_check_mode and guest_base_fw_install is changed)
+      block:
+        # `offline: true` writes the permanent configuration directly rather
+        # than going through the running daemon's D-Bus interface, which is
+        # what makes this work while firewalld is still stopped. Without it
+        # this task fails outright on a first run ("Firewalld daemon must be
+        # running") — precisely the run where getting the SSH rule in first
+        # matters most.
+        - name: Allow the baseline services in the permanent config, daemon still stopped
+          ansible.posix.firewalld:
+            service: "{{ item }}"
+            zone: "{{ guest_base_firewall_zone }}"
+            permanent: true
+            offline: true
+            state: enabled
+          loop: "{{ guest_base_firewall_services }}"
+          loop_control:
+            label: "{{ item }} -> {{ guest_base_firewall_zone }} (permanent)"
+
+        - name: Start and enable the firewall
+          ansible.builtin.service:
+            name: firewalld
+            state: started
+            enabled: true
+
+        # Runtime as well as permanent. The permanent config above is what survives
+        # a reboot; this is what is actually enforced right now. On a run where
+        # firewalld was ALREADY running, step 2 changed only the on-disk config and
+        # the live ruleset would otherwise not reflect it until something reloaded.
+        - name: Allow the baseline services in the running firewall
+          ansible.posix.firewalld:
+            service: "{{ item }}"
+            zone: "{{ guest_base_firewall_zone }}"
+            immediate: true
+            permanent: true
+            state: enabled
+          loop: "{{ guest_base_firewall_services }}"
+          loop_control:
+            label: "{{ item }} -> {{ guest_base_firewall_zone }} (runtime)"
+
+        # Verifies what is actually enforced, rather than trusting that the tasks
+        # above did what they said. This role has no console fallback; "the play
+        # said changed=true" is not the same claim as "SSH is still permitted",
+        # and this project has already been bitten twice by exactly that gap.
+        - name: Read the firewall's live state
+          ansible.builtin.command: firewall-cmd --list-all --zone={{ guest_base_firewall_zone }}
+          register: guest_base_fw_state
+          changed_when: false
+          check_mode: false
+
+        - name: Confirm SSH survived the firewall being enabled
+          ansible.builtin.assert:
+            that:
+              - "'ssh' in guest_base_fw_state.stdout"
+            fail_msg: >-
+              firewalld is active on {{ inventory_hostname }} but the running
+              {{ guest_base_firewall_zone }} zone does not list the ssh service.
+              This connection is living on borrowed time — it survives only because
+              it is an established conntrack entry, and the next new connection
+              will be refused. Fix the zone now, or roll the guest back to its
+              `clean` snapshot. Live zone state:
+              {{ guest_base_fw_state.stdout }}
+            success_msg: >-
+              {{ inventory_hostname }} firewall active, ssh permitted in
+              {{ guest_base_firewall_zone }}

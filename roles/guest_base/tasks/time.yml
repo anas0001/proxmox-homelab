@@ -1,0 +1,36 @@
+---
+# Time sync and timezone. chrony is installed by packages.yml; this makes it
+# running and enabled, and pins the timezone.
+
+- name: Time synchronisation
+  tags: [time]
+  block:
+    - name: Set the timezone
+      community.general.timezone:
+        name: "{{ guest_base_timezone }}"
+      notify: Restart time service
+
+    - name: Ensure the time service is running and enabled
+      ansible.builtin.service:
+        name: "{{ guest_base_time_service }}"
+        state: started
+        enabled: true
+
+    # Asserts the outcome rather than trusting that starting the service was
+    # enough — a chronyd that is running but has no reachable source still
+    # leaves the guest's clock wrong, which is the actual thing being asked
+    # for here. Not fatal: a guest that has just booted may legitimately not
+    # have synchronised yet, so this reports rather than fails.
+    - name: Check whether the clock has actually synchronised
+      ansible.builtin.command: timedatectl show -p NTPSynchronized --value
+      register: guest_base_ntp_synced
+      changed_when: false
+      failed_when: false
+
+    - name: Report clock synchronisation state
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: timezone {{ guest_base_timezone }},
+          NTP synchronised = {{ guest_base_ntp_synced.stdout | default('unknown') }}
+          {{ '(still settling - normal shortly after boot)'
+             if guest_base_ntp_synced.stdout | default('') != 'yes' else '' }}

@@ -1,2 +1,47 @@
 ---
 # handlers file for guest_base
+
+# Reload, never restart. A reload re-reads config for new connections without
+# tearing down established sessions — including the one Ansible is running
+# over. On a guest with locked passwords and therefore no usable console, a
+# restart that fails to come back is unrecoverable short of a snapshot
+# rollback, so the safer of two equivalent options is the only sane choice.
+#
+# The template that notifies this already validated with `sshd -t -f %s`, so
+# the check below is defence in depth: it catches something ELSE under
+# sshd_config.d having broken between that write and this reload.
+- name: Reload sshd
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  listen: Reload sshd
+
+- name: Reload sshd
+  ansible.builtin.service:
+    name: "{{ guest_base_sshd_service }}"
+    state: reloaded
+  listen: Reload sshd
+
+- name: Restart time service
+  ansible.builtin.service:
+    name: "{{ guest_base_time_service }}"
+    state: restarted
+
+- name: Reload firewalld
+  ansible.builtin.command: firewall-cmd --reload
+  changed_when: true
+
+# dnf-automatic reads its config when the timer fires, not continuously, so a
+# restart is only needed to pick up a changed schedule. Restarting the timer
+# unit is harmless and makes the config change observable in the run.
+#
+# Guarded like the tasks that notify it: under --check on a guest that has
+# never run this role, the config task reports "changed" and notifies, but the
+# package was never installed so the unit does not exist and the handler fails
+# with "Could not find the requested service". A handler failing is worse than
+# a task failing — it lands at the very end of the play, after everything
+# looked fine.
+- name: Restart auto-update timer
+  ansible.builtin.service:
+    name: "{{ guest_base_auto_update_service }}"
+    state: restarted
+  when: not (ansible_check_mode and guest_base_upd_install is changed)

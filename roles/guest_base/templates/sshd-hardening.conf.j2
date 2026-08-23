@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+#
+# Drop-in, not an edit to sshd_config: the distribution owns that file and a
+# package upgrade may rewrite it. Both Rocky 9 and Ubuntu ship an
+# `Include /etc/ssh/sshd_config.d/*.conf` near the TOP of sshd_config, and
+# sshd takes the FIRST value it sees for any keyword — so a drop-in included
+# early wins over the same keyword set later in the main file, and a
+# lower-numbered drop-in wins over this one.
+
+# Key-only. vm_provision injects the admin key via cloud-init; nothing in this
+# project ever authenticates to a guest with a password, and both accounts on
+# these images have locked passwords anyway.
+PasswordAuthentication {{ 'yes' if guest_base_ssh_password_auth else 'no' }}
+PubkeyAuthentication yes
+
+# Rocky's cloud image ships `PermitRootLogin without-password`, which still
+# allows key-based root login. svc_admin has passwordless sudo, so root SSH is
+# redundant — and a refused root login is one fewer account worth brute-forcing.
+PermitRootLogin {{ 'yes' if guest_base_ssh_permit_root_login else 'no' }}
+
+# Neither is used by this project, and both are common lateral-movement paths
+# out of a compromised lab guest.
+AllowAgentForwarding no
+PermitEmptyPasswords no

@@ -1,0 +1,14 @@
+---
+# Distribution-specific names for the RedHat family (Rocky 9 today).
+# Loaded by tasks/main.yml from ansible_facts['os_family'].
+
+# `sshd` here, `ssh` on Debian — the single most common cause of a
+# distribution-aware role working on one family and failing on the other.
+guest_base_sshd_service: sshd
+# chronyd on RHEL, chrony on Debian. Same package, different unit name.
+guest_base_time_service: chronyd
+guest_base_firewall_package: firewalld
+# dnf-automatic ships the timer that actually applies updates; the package
+# alone does nothing until the timer is enabled.
+guest_base_auto_update_package: dnf-automatic
+guest_base_auto_update_service: dnf-automatic.timer

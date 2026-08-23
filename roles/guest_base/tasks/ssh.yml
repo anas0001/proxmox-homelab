@@ -1,0 +1,108 @@
+---
+# SSH hardening on the guest.
+#
+# Applied as a drop-in under /etc/ssh/sshd_config.d/ rather than by editing
+# sshd_config, for the same reason pve_security does it on the host: the
+# distribution owns that file, and a drop-in survives a package upgrade
+# rewriting it. Both Rocky 9 and Ubuntu ship sshd_config with an Include of
+# that directory.
+#
+# ORDER MATTERS INSIDE THIS FILE. The drop-in is validated before it is ever
+# written (`validate: sshd -t -f %s`), and the reload is a reload rather than
+# a restart. Getting this wrong locks the guest out permanently: cloud-init
+# leaves svc_admin and root with locked passwords, so the Proxmox console
+# cannot log in either. The only recovery is a rollback to the `clean`
+# snapshot.
+
+- name: SSH hardening
+  tags: [ssh]
+  block:
+    # Asserted, not created. vm_provision already had cloud-init create this
+    # user and install its key — if it is somehow absent, something upstream
+    # went wrong and quietly creating it here would paper over that while
+    # leaving a guest nobody holds a key for.
+    - name: Confirm the admin user this role is connected as exists
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_user | default(ansible_facts['user_id']) }}"
+      register: guest_base_admin_user
+      failed_when: false
+
+    - name: Fail clearly when the admin user is missing
+      ansible.builtin.assert:
+        that:
+          - guest_base_admin_user is not failed
+          - guest_base_admin_user.ansible_facts.getent_passwd | default({}) | length > 0
+        fail_msg: >-
+          The admin user this play connected as does not exist in
+          /etc/passwd on {{ inventory_hostname }}, which should be impossible
+          given the connection succeeded. Investigate before hardening SSH —
+          applying a key-only, no-root policy to a guest whose admin account is
+          in an unknown state is how a guest becomes unreachable.
+        success_msg: "Admin user present on {{ inventory_hostname }}"
+
+    - name: Apply the SSH hardening drop-in
+      ansible.builtin.template:
+        src: sshd-hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/10-guest-hardening.conf
+        owner: root
+        group: root
+        mode: "0600"
+        # The only thing standing between a typo in the template and a guest
+        # that can never be logged into again. sshd refuses to start on a
+        # config it cannot parse, and with no console fallback that is
+        # unrecoverable short of a snapshot rollback.
+        validate: "sshd -t -f %s"
+      notify: Reload sshd
+
+    # Flushed here rather than at end-of-play. Handlers normally run once, at
+    # the very end; if a later task in this role fails first, an un-flushed
+    # reload means the guest is left with a hardening file on disk that the
+    # running daemon has not read — the exact silent-no-op that bit
+    # pve_security's first real run (docs/06-out-of-band.md, 2026-08-20).
+    - name: Flush handlers so the SSH reload happens now
+      ansible.builtin.meta: flush_handlers
+
+    # Verifies the running daemon, not the file. `sshd -T` re-parses config
+    # from disk on every invocation, so it reports what sshd WOULD load, which
+    # is not proof the running listener reloaded — that distinction is exactly
+    # what made the host's hardening silently inert for hours. Checking here is
+    # still worth it: combined with the flush above, a mismatch means the
+    # reload did not take.
+    # Skipped under --check, along with the assertion below. In check mode the
+    # drop-in above is never actually written and the handler never reloads, so
+    # sshd still reports the pre-hardening config and the assertion would fail
+    # every dry run with a message blaming a drop-in conflict that does not
+    # exist. Verified the ordering premise separately and for real: the only
+    # drop-ins on Rocky's cloud image are 50-cloud-init.conf and
+    # 50-redhat.conf, so this role's 10- prefix genuinely sorts first, and
+    # sshd_config's Include sits at line 15 — above the main file's own
+    # keywords, which sshd would otherwise have taken first.
+    - name: Read the effective SSH configuration
+      ansible.builtin.command: sshd -T
+      register: guest_base_sshd_effective
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Confirm SSH ended up in the intended state
+      when: not ansible_check_mode
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication ' ~ ('yes' if guest_base_ssh_password_auth else 'no')
+             in guest_base_sshd_effective.stdout"
+          - "'permitrootlogin ' ~ ('yes' if guest_base_ssh_permit_root_login else 'no')
+             in guest_base_sshd_effective.stdout"
+        fail_msg: >-
+          sshd's effective config does not match what this role asked for on
+          {{ inventory_hostname }}. Expected passwordauthentication
+          {{ 'yes' if guest_base_ssh_password_auth else 'no' }} and
+          permitrootlogin
+          {{ 'yes' if guest_base_ssh_permit_root_login else 'no' }}. Something
+          else under /etc/ssh/sshd_config.d/ is very likely overriding this
+          role's drop-in — files there are read in lexical order and the FIRST
+          setting of a keyword wins, so a lower-numbered file beats 10-.
+        success_msg: >-
+          SSH on {{ inventory_hostname }}: password auth
+          {{ 'on' if guest_base_ssh_password_auth else 'off' }}, root login
+          {{ 'permitted' if guest_base_ssh_permit_root_login else 'refused' }}

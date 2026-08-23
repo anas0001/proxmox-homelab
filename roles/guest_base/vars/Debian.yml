@@ -1,0 +1,15 @@
+---
+# Distribution-specific names for the Debian family (Ubuntu guests).
+# Loaded by tasks/main.yml from ansible_facts['os_family'].
+#
+# NOT YET EXERCISED AGAINST A REAL GUEST: no Ubuntu template exists yet
+# (vm_template_images carries rocky9 only; ubuntu2404 is commented out as
+# build-on-demand). These names are taken from the packages' own
+# documentation, not from a run against a live Ubuntu lab VM, and should be
+# treated as unverified until one exists. Recorded honestly rather than
+# implied to be tested.
+guest_base_sshd_service: ssh
+guest_base_time_service: chrony
+guest_base_firewall_package: firewalld
+guest_base_auto_update_package: unattended-upgrades
+guest_base_auto_update_service: unattended-upgrades
