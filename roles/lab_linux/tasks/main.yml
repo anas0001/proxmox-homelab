@@ -1,0 +1,123 @@
+---
+# Phase 1 — Linux fundamentals lab. Layers on top of guest_base.
+#
+# Sets the stage and stops. The exercises in the brief are done BY HAND, at the
+# guest's shell — that is the entire point, and a role that created the volume
+# group and the array for you would leave a working system and an empty
+# afternoon.
+
+- name: Gather facts if a tag-scoped run skipped the implicit gathering
+  ansible.builtin.setup:
+  when: ansible_facts['os_family'] is not defined
+  tags: [always]
+
+- name: Install the lab tooling
+  ansible.builtin.package:
+    name: "{{ lab_linux_packages }}"
+    state: present
+  register: lab_linux_pkg
+  until: lab_linux_pkg is succeeded
+  retries: 2
+  delay: 5
+  tags: [lab-linux, packages]
+
+# ── Identify the lab disks ───────────────────────────────────────────────
+# Everything below refuses to guess. The by-path link for a slot either
+# resolves to a real block device or it does not, and the role says which.
+
+# Globbed on the scsi slot suffix rather than built from a full by-path name,
+# because the PCI address embedded in that name (pci-0000:06:05.0-...) is a
+# property of the guest's virtual SCSI controller and is not guaranteed to be
+# identical on every VM. Matching only the trailing scsi-0:0:0:<slot> keeps
+# this correct wherever the controller lands.
+- name: Find the lab disks by SCSI slot, without assuming a PCI address
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    readlink -f /dev/disk/by-path/*-scsi-0:0:0:{{ item }} 2>/dev/null | head -1
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_linux_disk_slots }}"
+  loop_control:
+    label: "scsi{{ item }}"
+  register: lab_linux_slotmap
+  changed_when: false
+  check_mode: false
+
+- name: Record which device each lab slot resolved to
+  ansible.builtin.set_fact:
+    lab_linux_disks: >-
+      {{ lab_linux_slotmap.results
+         | map(attribute='stdout') | select('match', '^/dev/.+') | list }}
+    lab_linux_root_device: >-
+      {{ ansible_facts['mounts']
+         | selectattr('mount', 'equalto', '/') | map(attribute='device')
+         | first | default('') }}
+
+- name: Fail when a configured lab slot has no disk attached
+  ansible.builtin.assert:
+    that:
+      - lab_linux_disks | length == lab_linux_disk_slots | length
+    fail_msg: >-
+      Expected {{ lab_linux_disk_slots | length }} lab disk(s) at SCSI slots
+      {{ lab_linux_disk_slots | join(', ') }} on {{ inventory_hostname }}, but
+      resolved only {{ lab_linux_disks | length }}
+      ({{ lab_linux_disks | join(', ') | default('none', true) }}). Check the
+      VM's extra_disks in vm_provision_vms — this lab needs its spare disks to
+      exist before there is anything to practise on.
+    success_msg: >-
+      Lab disks on {{ inventory_hostname }}:
+      {{ lab_linux_disks | join(', ') }}
+
+# THE safety check. Everything destructive in this role is scoped to
+# lab_linux_disks, so proving that list cannot contain the boot disk is what
+# makes the rest safe. Compares against the device actually carrying /, read
+# from facts, rather than trusting that slot 0 was excluded correctly.
+- name: Refuse to treat the boot disk as a lab disk
+  ansible.builtin.assert:
+    that:
+      - lab_linux_boot_slot not in lab_linux_disk_slots
+      - lab_linux_disks | select('in', lab_linux_root_device) | list | length == 0
+      - lab_linux_root_device | length > 0
+    fail_msg: >-
+      SAFETY STOP on {{ inventory_hostname }}. The resolved lab disks
+      ({{ lab_linux_disks | join(', ') }}) overlap the device carrying /
+      ({{ lab_linux_root_device | default('unknown') }}), or the boot slot
+      {{ lab_linux_boot_slot }} appears in lab_linux_disk_slots. Nothing has
+      been changed. Do not re-run until lab_linux_disk_slots is corrected —
+      this role's reset path would otherwise wipe the running system.
+    success_msg: >-
+      Boot disk ({{ lab_linux_root_device }}) confirmed outside the lab disk set
+
+- name: Read the current state of each lab disk
+  ansible.builtin.command: "lsblk -no NAME,SIZE,FSTYPE,MOUNTPOINT {{ item }}"
+  loop: "{{ lab_linux_disks }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_linux_disk_state
+  changed_when: false
+  check_mode: false
+
+- name: Reset the lab disks back to unpartitioned
+  ansible.builtin.include_tasks: reset.yml
+  when: lab_linux_reset_disks | bool
+  tags: [lab-linux, reset]
+
+- name: Write the lab brief onto the guest
+  ansible.builtin.template:
+    src: lab-brief.md.j2
+    dest: "{{ lab_linux_brief_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: lab_linux_write_brief | bool
+  tags: [lab-linux, brief]
+
+- name: Report the lab environment
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} ready for the Linux lab.
+      Disks: {{ lab_linux_disks | join(', ') }} (boot disk
+      {{ lab_linux_root_device }} excluded).
+      Brief: {{ lab_linux_brief_path }}.
+      Nothing has been partitioned or formatted — that is the exercise.
+  tags: [lab-linux]

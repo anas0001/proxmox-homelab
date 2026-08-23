@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Muhammad Anas Suleman
+  description: "Phase 1 Linux fundamentals lab: tooling and disposable disks for LVM, RAID and filesystem practice."
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+  galaxy_tags:
+    - lab
+    - lvm
+    - raid
+    - filesystems
+
+dependencies: []

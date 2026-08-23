@@ -1,0 +1,62 @@
+# {{ ansible_managed }}
+# Phase 1 — Linux fundamentals lab, on {{ inventory_hostname }}
+
+Everything below is done BY HAND. Ansible has installed the tooling and proved
+the spare disks are safe to destroy; it has deliberately NOT created a volume
+group, an array or a filesystem. That is the exercise.
+
+## Your disks
+
+    boot (DO NOT TOUCH) : {{ lab_linux_root_device }}
+    lab disks           : {{ lab_linux_disks | join(', ') }}
+
+These map to Proxmox SCSI slots {{ lab_linux_disk_slots | join(' and ') }}, and the mapping is
+NOT in the order you would guess. On this guest:
+{% for slot in lab_linux_disk_slots %}
+    scsi{{ slot }}  ->  {{ lab_linux_disks[loop.index0] }}
+{% endfor %}
+
+Kernel names are assigned in discovery order, not slot order, and can move
+across reboots. Confirm with `lsblk` and `ls -l /dev/disk/by-path/` before you
+act on any device — this is a real habit worth building, not lab pedantry.
+
+## Exercises
+
+1. **Partitioning.** Put a GPT label and one partition on each lab disk with
+   `parted` or `sgdisk`. Compare `lsblk`, `blkid` and `parted print`.
+
+2. **LVM.** Build `pvcreate` -> `vgcreate` -> `lvcreate` across BOTH disks.
+   Make a filesystem, mount it, put data on it. Then grow the LV and grow the
+   filesystem onto the new space (`lvextend`, `xfs_growfs`). Notice that XFS
+   cannot shrink — that constraint is why the host's own `pve-root` shrink is
+   still deferred in docs/06-out-of-band.md.
+
+3. **RAID.** Tear the LVM setup down and build `mdadm --create` RAID1 across
+   the two disks instead. Then:
+   - fail a member deliberately (`mdadm --fail`, `--remove`)
+   - watch the array degrade in `/proc/mdstat`
+   - re-add it and watch the rebuild, with `iostat -x 2` running alongside so
+     the rebuild costs something visible
+
+4. **Filesystems.** Compare `xfs` and `ext4` on the same LV: create, fill,
+   `df` vs `du`, and what `fsck`/`xfs_repair` will and will not do.
+
+5. **Break it on purpose.** Corrupt a superblock, then recover using a backup
+   superblock. This is the exercise most worth doing, and the reason these
+   disks are disposable.
+
+## Resetting
+
+Two ways back to a clean slate, cheapest first:
+
+    # 1. roll the WHOLE guest back (resets everything, cannot target the wrong
+    #    disk). Run on the Proxmox host. The vmid encodes the address: node1 at
+    #    .11 is 111, node2 at .12 is 112 — see vm_provision_vms.
+    qm rollback <vmid> clean
+
+    # 2. wipe only the lab disks, from the control node
+    ansible-playbook playbooks/labs/linux.yml --limit {{ inventory_hostname }} \
+      -e lab_linux_reset_disks=true -e lab_linux_allow_destroy=true
+
+Option 1 is safer and usually faster. Option 2 exists for when you want to keep
+the rest of the guest's state.

@@ -1,0 +1,131 @@
+---
+# Wipes the lab disks back to unpartitioned so an exercise can be repeated.
+#
+# Reached only with lab_linux_reset_disks=true, and every disk still has to
+# clear the checks below individually. Written on the assumption it will one
+# day be run by accident.
+#
+# tasks/main.yml has already proved that lab_linux_disks excludes the device
+# carrying / before this file is ever included. That assertion is what makes
+# everything here safe; do not reorder them.
+
+- name: Refuse to wipe without an explicit opt-in
+  ansible.builtin.assert:
+    that:
+      - lab_linux_allow_destroy | bool
+    fail_msg: >-
+      Refusing to wipe the lab disks on {{ inventory_hostname }}:
+      lab_linux_reset_disks is true but lab_linux_allow_destroy is false. This
+      destroys every volume group, array and filesystem on
+      {{ lab_linux_disks | join(', ') }}, including any exercise in progress.
+      Re-run with `-e lab_linux_allow_destroy=true` if that is genuinely what
+      you want — or roll the guest back to its `clean` snapshot instead, which
+      resets the whole VM and cannot get the disk list wrong.
+    success_msg: "Wipe authorised on {{ inventory_hostname }}"
+
+# A mounted lab disk means an exercise is live, or worse, that something the
+# guest depends on is on it. Refused rather than force-unmounted: this role
+# does not get to decide that whatever is using it does not matter.
+- name: Check whether anything is mounted from the lab disks
+  ansible.builtin.command: "lsblk -no MOUNTPOINT {{ item }}"
+  loop: "{{ lab_linux_disks }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_linux_mounts
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to wipe a lab disk that is currently mounted
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim | length == 0
+    fail_msg: >-
+      {{ item.item }} on {{ inventory_hostname }} has a mounted filesystem
+      ({{ item.stdout | trim }}). Unmount it deliberately before resetting —
+      this role will not unmount something on your behalf and then destroy it.
+    success_msg: "{{ item.item }} carries no mounts"
+  loop: "{{ lab_linux_mounts.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# Tears the stack down from the top before wiping anything, because wipefs on
+# a device that is still in use does not reliably leave a clean disk:
+#
+#   - a member of a RUNNING md array gets re-added from its superblock on the
+#     next scan, so the signature comes back and the "wiped" disk is not clean;
+#   - a PV in an ACTIVE volume group is busy — its logical volumes still have
+#     device-mapper entries — so the wipe fails or leaves stale mappings.
+#
+# Both were found by running this against a real LVM setup rather than by
+# reasoning about it; the LVM half was missing entirely on the first attempt.
+#
+# A literal block scalar (|), NOT a folded one (>-). Folding collapses newlines
+# into spaces EXCEPT before a more-indented line, where it keeps them — which
+# silently produced a broken command substitution spanning two lines and failed
+# with "syntax error near unexpected token `|'". Multi-line shell belongs in a
+# literal block where the newlines are exactly what is written.
+- name: Stop any md array assembled from the lab disks
+  ansible.builtin.shell: |
+    set -o pipefail
+    for md in $(lsblk -nlo NAME,TYPE {{ lab_linux_disks | join(' ') }} | awk '$2 ~ /^raid/ {print $1}' | sort -u); do
+      mdadm --stop "/dev/$md" || true
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Deactivate and remove any volume group living on the lab disks
+  ansible.builtin.shell: |
+    set -o pipefail
+    for vg in $(pvs --noheadings -o vg_name {{ lab_linux_disks | join(' ') }} 2>/dev/null | awk 'NF{print $1}' | sort -u); do
+      vgchange -an "$vg" || true
+      vgremove -f -y "$vg" || true
+    done
+    for dev in {{ lab_linux_disks | join(' ') }}; do
+      pvremove -ff -y "$dev" 2>/dev/null || true
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Wipe all filesystem, RAID and LVM signatures from the lab disks
+  ansible.builtin.command: "wipefs --all --force {{ item }}"
+  loop: "{{ lab_linux_disks }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+# wipefs clears signatures but leaves the partition table's own bytes in place
+# on some layouts; zeroing the first and last megabyte removes GPT's primary
+# AND backup headers, which is what stops a "wiped" disk from being detected as
+# partitioned again on the next scan.
+- name: Zero the partition table areas at both ends of each lab disk
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    dd if=/dev/zero of={{ item }} bs=1M count=1 conv=fsync 2>/dev/null;
+    sz=$(blockdev --getsz {{ item }});
+    dd if=/dev/zero of={{ item }} bs=512 seek=$(( sz - 2048 )) count=2048 conv=fsync 2>/dev/null;
+    partprobe {{ item }} 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_linux_disks }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+- name: Confirm the lab disks are actually clean again
+  ansible.builtin.command: "lsblk -no NAME,FSTYPE,MOUNTPOINT {{ item }}"
+  loop: "{{ lab_linux_disks }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_linux_post_wipe
+  changed_when: false
+  check_mode: false
+
+- name: Report the reset result
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} lab disks reset:
+      {% for r in lab_linux_post_wipe.results %}
+      {{ r.item }} -> {{ r.stdout_lines | map('trim') | join(' | ') }}
+      {% endfor %}
