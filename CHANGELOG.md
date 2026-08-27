@@ -7,10 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
-- Green shell prompt on the Proxmox host and every lab guest, single-sourced as
-  `shell_prompt_colour` in `group_vars/all` so the two cannot drift. Rendered to
-  `/etc/profile.d/50-prompt.sh` by `pve_base` and `guest_base`, which covers root and any future
-  admin account without this repository editing anyone's dotfiles.
+- Green shell prompt on lab guests, rendered to `/etc/profile.d/50-prompt.sh` by `guest_base`,
+  which covers root and any future admin account without this repository editing anyone's
+  dotfiles. Rocky's cloud image leaves `PS1` to bash's default, so this is doing real work there.
+
+  **The Proxmox host deliberately does not get this.** It briefly did; that was reverted. Debian
+  already ships a coloured prompt in its stock `~/.bashrc`, so managing one on the host meant
+  fighting the distribution for a result it already provides. The colour setting moved out of
+  `group_vars/all` and into `guest_base`, since with the host out there is no longer a second
+  consumer to keep in step. Removing the task does not remove the file it already wrote, so the
+  host's copy was deleted directly — recorded in `docs/06-out-of-band.md`, with no `state: absent`
+  task added, because a rebuilt host never gets the file in the first place.
 
   Set through `PROMPT_COMMAND` rather than by assigning `PS1` directly, because assigning it does
   not survive: a bash login shell sources `/etc/profile.d/*.sh` first and the user's `~/.bashrc`

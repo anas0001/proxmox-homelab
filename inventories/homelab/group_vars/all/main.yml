@@ -55,23 +55,6 @@ lab_bridge: vmbr1
 # single line to change.
 lab_timezone: "Europe/London"
 
-# ── Shell prompt ────────────────────────────────────────────────────────
-# A coloured prompt on the Proxmox host and every lab guest. Defined here
-# rather than in either role because both pve_base (pve_bootstrap.yml) and
-# guest_base (configure_guests.yml) render it, and a role default is only in
-# scope inside its own role — so this is the one place the colour is set and
-# the two cannot drift apart.
-#
-# ANSI foreground codes: 31 red, 32 green, 33 yellow, 34 blue, 36 cyan.
-#
-# The hostname is part of the prompt, which is what actually tells you whether
-# you are on the hypervisor or in a guest. Worth knowing: making the HOST a
-# different colour from the guests is a cheap safeguard, given the commands
-# that get typed on a hypervisor. Set pve_base_prompt_colour separately if you
-# ever want that; it defaults to this shared value.
-shell_prompt_manage: true
-shell_prompt_colour: "32"
-
 # ── Python venv for community.proxmox ────────────────────────────────
 # Defined here (group_vars/all), not inside roles/pve_base/defaults/main.yml,
 # because it must resolve in playbooks/provision_vms.yml too, and that play

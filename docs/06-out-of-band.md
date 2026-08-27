@@ -216,6 +216,30 @@ access-plane row.
 
 ## Incidents
 
+### 2026-08-27 — `/etc/profile.d/50-prompt.sh` removed from the host by hand
+
+`pve_base` briefly managed a coloured shell prompt on the host. That was reverted: Debian already
+ships a coloured prompt in its stock `~/.bashrc`, so managing one here meant fighting the
+distribution for a result it already provides. Guests keep theirs — Rocky's image leaves `PS1` to
+bash's default, so there the role is doing real work.
+
+Deleting the Ansible task does not delete the file it already wrote, so the host was left with a
+`PROMPT_COMMAND` still overriding Debian's prompt. Removed directly:
+
+```bash
+rm -f /etc/profile.d/50-prompt.sh
+```
+
+**No task was added to remove it**, deliberately. A rebuilt host never gets the file in the first
+place, so a `state: absent` task would exist only to clean up after a version of the repository
+that no longer exists — permanent clutter for a one-time problem on exactly one machine.
+
+**Verify:** `bash -lic 'echo $PS1'` on the host shows Debian's stock prompt
+(`\[\033[01;32m\]\u@\h...\[\033[01;34m\]\w`, green user@host and a BLUE path) rather than
+the all-green one, and `/etc/profile.d/50-prompt.sh` does not exist. Confirmed on both counts, and
+confirmed that node1/node2 still render the all-green prompt.
+
+
 ### 2026-08-22 — host.fw backed up by hand, and a test package installed in a lab guest, while fixing lab DNS
 
 Before changing the host firewall over the SSH connection that firewall governs, the live rules

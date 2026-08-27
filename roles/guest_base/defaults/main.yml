@@ -70,7 +70,14 @@ guest_base_enable_auto_updates: true
 guest_base_auto_reboot: false
 
 # ── Shell prompt ─────────────────────────────────────────────────────────
-# Colour comes from the shared shell_prompt_colour in group_vars/all, which the
-# Proxmox host also reads, so the host and its guests cannot drift apart.
-guest_base_manage_prompt: "{{ shell_prompt_manage }}"
-guest_base_prompt_colour: "{{ shell_prompt_colour }}"
+# A coloured prompt on lab guests only. Rocky's cloud image leaves PS1 to
+# bash's default, so without this a guest prompt is uncoloured.
+#
+# The Proxmox HOST deliberately does not get this. Debian already ships a
+# coloured prompt in its stock ~/.bashrc, so managing one there meant fighting
+# the distribution for a result it already provides — and the host is the one
+# machine where the out-of-the-box appearance is worth leaving recognisable.
+#
+# ANSI foreground codes: 31 red, 32 green, 33 yellow, 34 blue, 36 cyan.
+guest_base_manage_prompt: true
+guest_base_prompt_colour: "32"
