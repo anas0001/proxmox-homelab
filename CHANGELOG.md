@@ -7,6 +7,53 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Green shell prompt on the Proxmox host and every lab guest, single-sourced as
+  `shell_prompt_colour` in `group_vars/all` so the two cannot drift. Rendered to
+  `/etc/profile.d/50-prompt.sh` by `pve_base` and `guest_base`, which covers root and any future
+  admin account without this repository editing anyone's dotfiles.
+
+  Set through `PROMPT_COMMAND` rather than by assigning `PS1` directly, because assigning it does
+  not survive: a bash login shell sources `/etc/profile.d/*.sh` first and the user's `~/.bashrc`
+  afterwards, so the value is simply overwritten. Found live — the host kept Debian's stock
+  prompt (green user@host, **blue** path), which looked close enough to correct to be missed at a
+  glance, while the Rocky guests picked the new one up because their default `~/.bashrc` does not
+  set `PS1` at all. `PROMPT_COMMAND` runs after every dotfile has finished, so it wins on both.
+  Prepended rather than assigned so a user's own `PROMPT_COMMAND` still runs, and guarded so
+  re-sourcing cannot stack duplicates.
+
+  Guarded for the cases where a prompt makes no sense: bash only (`/etc/profile.d` is sourced by
+  dash too, which would print the `\u`/`\h` escapes literally), interactive shells only, and a
+  plain uncoloured fallback when there is no TTY or `TERM` is `dumb`.
+
+  Verified in real login shells with a TTY: host as `svc_admin`, host as `root` via `sudo -i`,
+  and both guests.
+- `lab_linux` role and `playbooks/labs/linux.yml`: Phase 1 Linux fundamentals lab — LVM,
+  filesystems and RAID practice on disposable disks. It installs the tooling, proves the spare
+  disks are safe to destroy, and writes a brief to `/etc/lab-linux.md` on each guest, then stops.
+  It deliberately does **not** create the volume group, assemble the array or make the
+  filesystems: automating the exercise would leave a working system and nothing learned. Every
+  other role in this repository converges infrastructure to a desired state; this one stops at
+  "ready to be worked on by hand", and that restraint is the design.
+
+  Lab disks are resolved by Proxmox SCSI slot through `/dev/disk/by-path/*-scsi-0:0:0:<slot>`,
+  never by kernel name, because the two disagree: on these guests `scsi1` is `/dev/sdc` and
+  `scsi2` is `/dev/sdb`, exactly backwards from the obvious guess. Anything hardcoding `/dev/sdb`
+  would have operated on the wrong disk while looking correct — and in the reset path that is the
+  difference between wiping a spare disk and wiping the wrong one. Before anything runs, the role
+  asserts the resolved list cannot contain the device carrying `/`, read from facts rather than
+  assumed.
+
+  The reset path (wipe the lab disks back to unpartitioned) needs both `lab_linux_reset_disks`
+  and `lab_linux_allow_destroy`, refuses while anything is mounted, and tears the stack down from
+  the top first — stopping md arrays and deactivating volume groups before wiping. That last part
+  is not optional: `wipefs` on a member of a running array leaves a disk md re-adds from its
+  superblock, and a PV in an active volume group is busy. Both were found by exercising the path
+  against a real LVM stack, and the LVM half was missing entirely on the first attempt.
+
+  Verified live: applied to node1 and node2, idempotent on re-run; the reset was exercised against
+  a real volume group spanning both disks with a mounted XFS filesystem, confirmed to refuse while
+  mounted, then to leave both disks with no signatures, no volume group and no device-mapper
+  entries, with the boot disk and mounted root untouched.
 - `guest_base` role: the baseline every lab guest gets over SSH once `vm_provision` has booted it
   — base packages, timezone and time sync, SSH hardening, a default-deny host firewall, and
   unattended **security** updates (not full upgrades: a lab whose kernel changes under you between

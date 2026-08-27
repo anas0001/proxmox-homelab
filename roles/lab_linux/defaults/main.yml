@@ -1,0 +1,64 @@
+---
+# Phase 1 — Linux fundamentals lab: LVM, filesystems, RAID.
+#
+# This role SETS THE STAGE; it does not perform the exercises. It installs the
+# tooling, proves the spare disks are present and safe to scribble on, and
+# leaves a brief on the guest. It deliberately does NOT create the volume
+# group, assemble the array or make the filesystems — doing that would automate
+# away the entire point of the lab and leave nothing to learn.
+#
+# The one destructive capability it has (wiping the spare disks back to clean so
+# an exercise can be repeated) is behind two switches and a per-disk safety
+# check. See tasks/reset.yml.
+
+# ── Which disks belong to the lab ────────────────────────────────────────
+# By Proxmox SCSI slot, NOT by kernel device name. vm_provision attaches these
+# as scsi1 and scsi2; Linux names them in DISCOVERY order, which is not slot
+# order — confirmed on node1, where scsi slot 1 is /dev/sdc and slot 2 is
+# /dev/sdb, i.e. exactly backwards from the obvious guess. Anything in this
+# role that hardcoded /dev/sdb would have been operating on the wrong disk
+# while looking entirely correct.
+#
+# Resolved through /dev/disk/by-path/*-scsi-0:0:0:<slot>, which is stable
+# across reboots and maps one-to-one onto the scsiN the hypervisor configured.
+lab_linux_disk_slots:
+  - 1
+  - 2
+
+# The boot disk's slot. Never touched, and asserted against explicitly rather
+# than merely omitted — a typo in the list above should fail loudly, not
+# silently target the root filesystem.
+lab_linux_boot_slot: 0
+
+# ── Tooling ──────────────────────────────────────────────────────────────
+# The lab is about driving these by hand, so the role's job is to make sure
+# they exist and then get out of the way. Rocky's cloud image already ships
+# mdadm, xfsprogs and parted; lvm2 is genuinely missing and is the one the
+# first exercise needs.
+lab_linux_packages:
+  - lvm2
+  - mdadm
+  - xfsprogs
+  - e2fsprogs
+  - parted
+  - gdisk
+  - smartmontools
+  - sysstat        # iostat, for watching a rebuild actually cost something
+
+# ── Lab brief ────────────────────────────────────────────────────────────
+# Written onto the guest so the exercises are discoverable from an SSH session
+# rather than only in the repository on the workstation.
+lab_linux_brief_path: /etc/lab-linux.md
+lab_linux_write_brief: true
+
+# ── Reset ────────────────────────────────────────────────────────────────
+# Wipes the lab disks back to unpartitioned, so an exercise can be run again
+# from scratch. OFF by default and gated on a second explicit flag, for the
+# same reason vm_provision's teardown is: a destructive path that needs only
+# one variable is one typo away from firing during an ordinary run.
+#
+# Note there is a cheaper, safer reset available that this role cannot break:
+# every lab VM has a `clean` snapshot from vm_provision. Rolling back to that
+# resets the whole guest, not just its spare disks.
+lab_linux_reset_disks: false
+lab_linux_allow_destroy: false

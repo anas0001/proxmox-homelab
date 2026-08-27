@@ -1,0 +1,16 @@
+---
+# Phase 1 — Linux fundamentals lab (LVM, filesystems, RAID).
+#
+# Layers on top of guest_base, which must have run first: this play assumes a
+# reachable guest with the admin user, tooling repos and a working resolver.
+#
+# Targets linux_lab rather than all guests. The labs are deliberately run one
+# set at a time — see the storage plan in docs/02-architecture.md; RAM is
+# ample on this host, disk churn is the constraint.
+- name: Prepare the Linux fundamentals lab
+  hosts: linux_lab
+  become: true
+  gather_facts: true
+  tags: [lab-linux]
+  roles:
+    - role: lab_linux

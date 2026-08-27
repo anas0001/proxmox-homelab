@@ -66,8 +66,24 @@ data are **gitignored**; committed examples use RFC1918 ranges and placeholder d
 > while exposing nothing that helps anyone attack the author's host.
 
 ## Status
-Early stage — see [`CHANGELOG.md`](CHANGELOG.md). Roadmap: hardened host -> template ->
-provisioning -> per-phase lab configuration.
+See [`CHANGELOG.md`](CHANGELOG.md). The platform path is complete end to end — hardened host ->
+golden template -> provisioned guests -> guest baseline — and running against real hardware.
+Per-phase lab configuration is now in progress.
+
+| Phase | Lab | State |
+|---|---|---|
+| 1 | Linux fundamentals (LVM, RAID, filesystems) | `lab_linux`, applied to `node1`/`node2` |
+| 2 | Networking (VLANs, routing, Containerlab) | not started — VMs not provisioned |
+| 2 | Storage (Ceph, ZFS) | not started — VMs not provisioned |
+| 3 | HPC (Slurm, parallel filesystem) | not started — VMs not provisioned |
+
+**The lab roles set the stage; they do not perform the exercises.** They install tooling, prove
+the disposable disks are safe to destroy, and leave a brief on the guest — then stop. Automating
+an exercise would leave a working system and nothing learned.
+
+Deliberately still manual, each documented where it lives: TLS (self-signed pending an ACME or
+internal-CA decision), backups (no target exists yet), a dedicated human admin account, and the
+Tailscale subnet route needed for VNC/XRDP. See [`docs/06-out-of-band.md`](docs/06-out-of-band.md).
 
 ## License
 [MIT](LICENSE).
