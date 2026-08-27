@@ -54,6 +54,14 @@ pve_base_packages:
 # boot, so a wrong clock here becomes a wrong clock everywhere.
 pve_base_manage_chrony: true
 
+# ── Shell prompt ───────────────────────────────────────────────────────────
+# Colour comes from the shared shell_prompt_colour in group_vars/all, which
+# every lab guest also reads, so the host and its guests cannot drift apart.
+# Overridable here on its own if the host should ever be visually distinct
+# from the guests — a cheap safeguard, given what gets typed on a hypervisor.
+pve_base_manage_prompt: "{{ shell_prompt_manage }}"
+pve_base_prompt_colour: "{{ shell_prompt_colour }}"
+
 # Host timezone. Sourced from the shared lab_timezone in group_vars/all, which
 # every lab guest also reads, so the hypervisor and its guests cannot disagree
 # about what time it is — see the note there on why it is a tzdata zone name

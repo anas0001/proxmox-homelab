@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+#
+# Coloured shell prompt, applied system-wide via /etc/profile.d so it covers
+# every user's login shell without this role editing anyone's dotfiles.
+
+# /etc/profile.d/*.sh is sourced by dash as well as bash on Debian, and the
+# PS1 escapes below (\u, \h, \w, \$) are bash-only — dash would print them
+# literally. Do nothing unless this is genuinely bash.
+[ -n "${BASH_VERSION:-}" ] || return 0
+
+# Non-interactive shells have no prompt to draw, and setting PS1 in one can
+# confuse tools that parse command output.
+case $- in
+  *i*) ;;
+  *) return 0 ;;
+esac
+
+__lab_prompt() {
+    # A terminal that cannot render colour would show the escape sequences as
+    # visible junk, so fall back to a plain prompt rather than a broken one.
+    if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
+        PS1='\[\033[01;{{ pve_base_prompt_colour }}m\]\u@\h\[\033[00m\]:\[\033[01;{{ pve_base_prompt_colour }}m\]\w\[\033[00m\]\$ '
+    else
+        PS1='\u@\h:\w\$ '
+    fi
+}
+
+# Set through PROMPT_COMMAND rather than by assigning PS1 here, because
+# assigning it here does not survive. A bash login shell sources
+# /etc/profile.d/*.sh FIRST and the user's ~/.bashrc afterwards, so any PS1 set
+# at this point is simply overwritten — confirmed on this host, where Debian's
+# stock ~/.bashrc replaced it with its own (green user@host, BLUE path) and the
+# result looked close enough to correct to be missed at a glance.
+#
+# PROMPT_COMMAND runs immediately before every prompt is drawn, which is after
+# all dotfiles have finished, so this wins. Prepended rather than assigned so
+# anything else a user sets still runs, and guarded so re-sourcing this file
+# cannot stack duplicates.
+case "${PROMPT_COMMAND:-}" in
+    *__lab_prompt*) ;;
+    *) PROMPT_COMMAND="__lab_prompt${PROMPT_COMMAND:+; ${PROMPT_COMMAND}}" ;;
+esac

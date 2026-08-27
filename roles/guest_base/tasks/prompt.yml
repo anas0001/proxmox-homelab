@@ -1,0 +1,16 @@
+---
+# Coloured shell prompt on the guest.
+
+- name: Shell prompt
+  tags: [prompt]
+  block:
+    # /etc/profile.d rather than any user's dotfiles, so it covers svc_admin
+    # and anything created later without this role needing to know who they
+    # are, and survives a user being recreated.
+    - name: Set a coloured shell prompt
+      ansible.builtin.template:
+        src: prompt.sh.j2
+        dest: /etc/profile.d/50-prompt.sh
+        owner: root
+        group: root
+        mode: "0644"

@@ -81,6 +81,19 @@
       (system clock is UTC underneath; this is display only)
   tags: [time, timezone]
 
+# Rendered to /etc/profile.d rather than to any user's dotfiles, so it covers
+# root and every future admin account without this role having to know who they
+# are, and survives a user being recreated.
+- name: Set a coloured shell prompt
+  ansible.builtin.template:
+    src: prompt.sh.j2
+    dest: /etc/profile.d/50-prompt.sh
+    owner: root
+    group: root
+    mode: "0644"
+  when: pve_base_manage_prompt | bool
+  tags: [prompt]
+
 - name: Include the thin-pool guard
   ansible.builtin.include_tasks: thin_pool_guard.yml
   tags: [storage, guard]
